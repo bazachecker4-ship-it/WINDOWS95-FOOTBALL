@@ -6,11 +6,20 @@
   --font-mono: "IBM Plex Mono", monospace;
 }
 
-/* Classic 90s OS Pixel Arrow Cursor (16x22 crisp SVG) */
+/* Classic Windows 95 Pixel Arrow & Hand Cursors */
 :root {
   --cursor-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='24' viewBox='0 0 16 20' shape-rendering='crispEdges'%3E%3Cpath d='M1 1v15l3.5-3.5 2.5 5.5 2.2-1-2.5-5.5H12L1 1z' fill='%23000000'/%3E%3Cpath d='M2 3.2v10.4l2.8-2.8 2.6 5.6.9-.4-2.6-5.6h4.1L2 3.2z' fill='%23ffffff'/%3E%3C/svg%3E") 1 1, auto;
   --cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='24' viewBox='0 0 18 20' shape-rendering='crispEdges'%3E%3Cpath d='M6 1h2v6h2V6h2v1h2v1h2v5l-1 5H6l-3-4v-3h2v1h1V1z' fill='%23000000'/%3E%3Cpath d='M7 2v9H5v1l2 3h6l1-4V9h-1v2h-1V8h-1v3h-1V7H9v4H8V2H7z' fill='%23ffffff'/%3E%3C/svg%3E") 6 1, pointer;
   --cursor-not-allowed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Ccircle cx='8' cy='8' r='6' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3Cpath d='M4 4l8 8' stroke='%23dc2626' stroke-width='2'/%3E%3C/svg%3E") 8 8, not-allowed;
+
+  --win95-bg: #008080;
+  --win95-silver: #c0c0c0;
+  --win95-light: #ffffff;
+  --win95-highlight: #dfdfdf;
+  --win95-shadow: #808080;
+  --win95-dark: #000000;
+  --win95-navy: #000080;
+  --win95-navy-end: #1084d0;
 }
 
 @layer base {
@@ -49,15 +58,25 @@
   }
 }
 
-/* Classic Old PC 90s Beveled Surfaces */
+/* Authentic Windows 95 Teal Desktop */
+.win95-desktop {
+  background-color: #008080;
+  background-image: radial-gradient(circle at 50% 45%, #008b8b 0%, #007373 65%, #005858 100%);
+}
+
+/* Classic Windows 95 Double-Bevel Window Frame */
 .pc-window {
-  background-color: #c8ccd0;
-  color: #111827;
-  border-top: 2px solid #f1f5f9;
-  border-left: 2px solid #f1f5f9;
-  border-right: 2px solid #334155;
-  border-bottom: 2px solid #334155;
-  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.75);
+  background-color: #c0c0c0;
+  color: #000000;
+  border-top: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080,
+    4px 4px 0px rgba(0, 0, 0, 0.55);
+  border-radius: 0;
 }
 
 .pc-window-dark {
@@ -65,86 +84,216 @@
   color: #e2e8f0;
   border-top: 2px solid #475569;
   border-left: 2px solid #475569;
-  border-right: 2px solid #020617;
-  border-bottom: 2px solid #020617;
-  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.8);
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.75);
+  border-radius: 0;
 }
 
+/* Sunken Panel / Status Pane */
 .pc-inset {
-  background-color: #aeb4ba;
-  border-top: 2px solid #475569;
-  border-left: 2px solid #475569;
-  border-right: 2px solid #f1f5f9;
-  border-bottom: 2px solid #f1f5f9;
+  background-color: #c0c0c0;
+  border-top: 2px solid #808080;
+  border-left: 2px solid #808080;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  box-shadow:
+    inset 1px 1px 0 #404040,
+    inset -1px -1px 0 #dfdfdf;
+  border-radius: 0;
+}
+
+/* Classic Win95 White Sunken Text Field / Listbox */
+.pc-field {
+  background-color: #ffffff;
+  color: #000000;
+  border-top: 2px solid #808080;
+  border-left: 2px solid #808080;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  box-shadow:
+    inset 1px 1px 0 #000000,
+    inset -1px -1px 0 #dfdfdf;
+  border-radius: 0;
 }
 
 .pc-inset-dark {
-  background-color: #0b1115;
+  background-color: #080d11;
   color: #e2e8f0;
-  border-top: 2px solid #020617;
-  border-left: 2px solid #020617;
-  border-right: 2px solid #334155;
-  border-bottom: 2px solid #334155;
+  border-top: 2px solid #000000;
+  border-left: 2px solid #000000;
+  border-right: 2px solid #808080;
+  border-bottom: 2px solid #808080;
+  box-shadow:
+    inset 1px 1px 0 #1e293b,
+    inset -1px -1px 0 #475569;
+  border-radius: 0;
 }
 
+/* Authentic Win95 Raised Push Button */
 .pc-btn {
-  background-color: #d4d8dc;
-  color: #0f172a;
-  border-top: 2px solid #f8fafc;
-  border-left: 2px solid #f8fafc;
-  border-right: 2px solid #334155;
-  border-bottom: 2px solid #334155;
-  transition: background-color 80ms ease;
+  background-color: #c0c0c0;
+  color: #000000;
+  border-top: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px -1px 0 #808080;
+  border-radius: 0;
+  transition: background-color 60ms ease;
 }
 
 .pc-btn:hover:not(:disabled) {
-  background-color: #e2e6ea;
+  background-color: #cbcbcb;
 }
 
 .pc-btn:active:not(:disabled) {
-  border-top: 2px solid #334155;
-  border-left: 2px solid #334155;
-  border-right: 2px solid #f8fafc;
-  border-bottom: 2px solid #f8fafc;
-  transform: translate(1px, 1px);
+  border-top: 2px solid #000000;
+  border-left: 2px solid #000000;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  box-shadow: inset 1px 1px 0 #808080;
+  padding-top: 1px;
+  padding-left: 1px;
 }
 
+.pc-btn:focus-visible {
+  outline: 1px dotted #000000;
+  outline-offset: -4px;
+}
+
+/* Win95 Default/Primary Action Button (Thick black outer focus frame) */
 .pc-btn-primary {
-  background-color: #15803d;
+  background-color: #008040;
   color: #ffffff;
-  border-top: 2px solid #4ade80;
-  border-left: 2px solid #4ade80;
-  border-right: 2px solid #052e16;
-  border-bottom: 2px solid #052e16;
+  border-top: 2px solid #6ee7b7;
+  border-left: 2px solid #6ee7b7;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+  box-shadow:
+    0 0 0 1px #000000,
+    inset -1px -1px 0 #064e3b;
+  border-radius: 0;
 }
 
 .pc-btn-primary:hover:not(:disabled) {
-  background-color: #16a34a;
+  background-color: #059669;
 }
 
 .pc-btn-primary:active:not(:disabled) {
-  border-top: 2px solid #052e16;
-  border-left: 2px solid #052e16;
-  border-right: 2px solid #4ade80;
-  border-bottom: 2px solid #4ade80;
+  border-top: 2px solid #000000;
+  border-left: 2px solid #000000;
+  border-right: 2px solid #6ee7b7;
+  border-bottom: 2px solid #6ee7b7;
   transform: translate(1px, 1px);
 }
 
+/* Pressed / Active Navy Toggle Button */
 .pc-btn-active {
   background-color: #000080;
   color: #ffffff;
-  border-top: 2px solid #60a5fa;
-  border-left: 2px solid #60a5fa;
-  border-right: 2px solid #020617;
-  border-bottom: 2px solid #020617;
+  border-top: 2px solid #000000;
+  border-left: 2px solid #000000;
+  border-right: 2px solid #dfdfdf;
+  border-bottom: 2px solid #dfdfdf;
+  box-shadow: inset 1px 1px 0 #0f172a;
+  border-radius: 0;
 }
 
+/* Classic Win95 Titlebar Gradient */
 .pc-titlebar {
-  background: linear-gradient(90deg, #000080 0%, #104e8b 100%);
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
   color: #ffffff;
+  border-radius: 0;
 }
 
-/* Subtle CRT scanline overlay (purely visual, never blocks clicks) */
+.pc-titlebar-inactive {
+  background: linear-gradient(90deg, #808080 0%, #b0b0b0 100%);
+  color: #dfdfdf;
+  border-radius: 0;
+}
+
+/* Classic Win95 Property Sheet Tab Strip */
+.win95-tab {
+  background-color: #c0c0c0;
+  color: #000000;
+  border-top: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #ffffff;
+  box-shadow: inset -1px 0 0 #808080;
+  margin-top: 2px;
+  border-radius: 0;
+}
+
+.win95-tab-active {
+  background-color: #c0c0c0;
+  color: #000080;
+  font-weight: 700;
+  border-top: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  border-right: 2px solid #000000;
+  border-bottom: 0;
+  box-shadow:
+    inset 1px 1px 0 #dfdfdf,
+    inset -1px 0 0 #808080;
+  margin-top: 0;
+  padding-bottom: 8px;
+  margin-bottom: -2px;
+  position: relative;
+  z-index: 2;
+  border-radius: 0;
+}
+
+/* Classic Win95 GroupBox */
+.win95-groupbox {
+  border: 1px solid #808080;
+  box-shadow:
+    inset 1px 1px 0 #ffffff,
+    1px 1px 0 #ffffff;
+  padding: 10px 10px 8px;
+  border-radius: 0;
+}
+
+.win95-groupbox > legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #000080;
+}
+
+/* Classic Win95 Segmented Progress Bar */
+.win95-progress-fill {
+  background-color: #000080;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #000080 0px,
+    #000080 8px,
+    #c0c0c0 8px,
+    #c0c0c0 10px
+  );
+}
+
+/* Subtle Win95 Scrollbars */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+::-webkit-scrollbar-track {
+  background: #dfdfdf;
+  border-left: 1px solid #808080;
+}
+::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border-top: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  border-right: 2px solid #000000;
+  border-bottom: 2px solid #000000;
+}
+
+/* Subtle CRT scanline overlay */
 .crt-scanlines {
   background-image: repeating-linear-gradient(
     0deg,

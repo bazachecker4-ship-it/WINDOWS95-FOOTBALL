@@ -7,12 +7,13 @@ import {
   GameMode,
   PlayerPiece,
   ROLE_META,
+  ServerDuelState,
   Team,
 } from "../types/game";
 import { BlitzCell, checkBlitzWinner, chooseBlitzAIMove, generateWinLines } from "../engine/blitzAi";
 import { ChessPieceIcon, SoccerBallIcon } from "./ChessPieceIcon";
 import { soundFX } from "../utils/sound";
-import { ShieldAlert } from "lucide-react";
+import { Globe, ShieldAlert } from "lucide-react";
 
 interface BlitzDuelModalProps {
   duel: ActiveBlitzDuel;
@@ -20,6 +21,10 @@ interface BlitzDuelModalProps {
   gameMode: GameMode;
   difficulty: AIDifficulty;
   blitzPace: BlitzPace;
+  isSpectator?: boolean;
+  localTeam?: Team;
+  serverDuelState?: ServerDuelState | null;
+  onServerMark?: (cellIdx: number) => void;
   onResolve: (winnerTeam: Team | "draw", outcomeText: string, wasTimeout: boolean) => void;
 }
 
@@ -29,8 +34,14 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
   gameMode,
   difficulty,
   blitzPace,
+  isSpectator = false,
+  localTeam = "blue",
+  serverDuelState = null,
+  onServerMark,
   onResolve,
 }) => {
+  const isServerDriven = Boolean(serverDuelState);
+
   const {
     size,
     winLength,
@@ -56,7 +67,7 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
 
   const lines = useMemo(() => generateWinLines(size, winLength), [size, winLength]);
 
-  const [board, setBoard] = useState<BlitzCell[]>(() => {
+  const [localBoard, setLocalBoard] = useState<BlitzCell[]>(() => {
     const arr: BlitzCell[] = Array(totalCells).fill(null);
     for (const bIdx of blockedCells) {
       if (bIdx >= 0 && bIdx < totalCells) arr[bIdx] = "BLOCKED";
@@ -64,15 +75,28 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
     return arr;
   });
 
-  const [turnMark, setTurnMark] = useState<"X" | "O">("X");
-  const [xQueue, setXQueue] = useState<number[]>([]);
-  const [oQueue, setOQueue] = useState<number[]>([]);
-  const [winningLine, setWinningLine] = useState<number[]>([]);
-  const [duelStatus, setDuelStatus] = useState<{
+  const [localTurnMark, setLocalTurnMark] = useState<"X" | "O">("X");
+  const [localXQueue, setLocalXQueue] = useState<number[]>([]);
+  const [localOQueue, setLocalOQueue] = useState<number[]>([]);
+  const [localWinningLine, setLocalWinningLine] = useState<number[]>([]);
+  const [localDuelStatus, setLocalDuelStatus] = useState<{
     finished: boolean;
     winnerTeam: Team | "draw" | null;
     message: string;
   }>({ finished: false, winnerTeam: null, message: "" });
+
+  const board = serverDuelState ? serverDuelState.board : localBoard;
+  const turnMark = serverDuelState ? serverDuelState.turnMark : localTurnMark;
+  const xQueue = serverDuelState ? serverDuelState.xQueue : localXQueue;
+  const oQueue = serverDuelState ? serverDuelState.oQueue : localOQueue;
+  const winningLine = serverDuelState ? serverDuelState.winningLine : localWinningLine;
+  const duelStatus = serverDuelState
+    ? {
+        finished: serverDuelState.finished,
+        winnerTeam: serverDuelState.winnerTeam,
+        message: serverDuelState.statusMessage,
+      }
+    : localDuelStatus;
 
   const getTurnTimeLimit = (mark: "X" | "O"): number | null => {
     if (baseTimeLimitMs === null) return null;
@@ -85,22 +109,44 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
   const [timeLeftMs, setTimeLeftMs] = useState<number>(currentTurnLimitMs ?? 0);
 
   const resolvedRef = useRef(false);
-  const stateRef = useRef({ board, xQueue, oQueue });
-  stateRef.current = { board, xQueue, oQueue };
+  const stateRef = useRef({ board: localBoard, xQueue: localXQueue, oQueue: localOQueue });
+  stateRef.current = { board: localBoard, xQueue: localXQueue, oQueue: localOQueue };
 
   const activeTeam: Team = turnMark === "X" ? initiator.team : defender.team;
-  const isAITurn = gameMode === "ai" && activeTeam === "red" && !duelStatus.finished;
+  const isWaitingForOpponent =
+    !duelStatus.finished &&
+    (isSpectator ||
+      (gameMode === "online" && activeTeam !== localTeam) ||
+      (gameMode === "ai" && activeTeam === "red"));
 
-  const finishDuel = (
+  const shouldRunLocalAi =
+    !isServerDriven &&
+    !duelStatus.finished &&
+    (isSpectator || (gameMode === "ai" && activeTeam === "red"));
+
+  // Sound FX feedback when server duel transitions to finished
+  const prevServerFinishedRef = useRef(false);
+  useEffect(() => {
+    if (!serverDuelState) return;
+    if (serverDuelState.finished && !prevServerFinishedRef.current) {
+      prevServerFinishedRef.current = true;
+      if (serverDuelState.winnerTeam === localTeam) soundFX.playBlitzWin(true);
+      else if (serverDuelState.winnerTeam && serverDuelState.winnerTeam !== "draw") {
+        soundFX.playBlitzWin(false);
+      }
+    }
+  }, [serverDuelState, localTeam]);
+
+  const finishLocalDuel = (
     winnerTeam: Team | "draw",
     line: number[],
     message: string,
     wasTimeout = false
   ) => {
-    if (resolvedRef.current) return;
+    if (isServerDriven || resolvedRef.current) return;
     resolvedRef.current = true;
-    setWinningLine(line);
-    setDuelStatus({ finished: true, winnerTeam, message });
+    setLocalWinningLine(line);
+    setLocalDuelStatus({ finished: true, winnerTeam, message });
 
     if (winnerTeam === "blue") soundFX.playBlitzWin(true);
     else if (winnerTeam === "red") soundFX.playBlitzWin(false);
@@ -111,7 +157,15 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
   };
 
   const applyMark = (cellIdx: number, mark: "X" | "O") => {
-    if (resolvedRef.current || duelStatus.finished) return;
+    if (isServerDriven) {
+      if (isWaitingForOpponent || duelStatus.finished) return;
+      if (board[cellIdx] !== null) return;
+      soundFX.playBlitzMark(localTeam === "blue");
+      onServerMark?.(cellIdx);
+      return;
+    }
+
+    if (resolvedRef.current || localDuelStatus.finished) return;
     const { board: currBoard, xQueue: currX, oQueue: currO } = stateRef.current;
     if (currBoard[cellIdx] !== null) return;
 
@@ -128,9 +182,9 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
     nextBoard[cellIdx] = mark;
     activeQ.push(cellIdx);
 
-    setBoard(nextBoard);
-    setXQueue(nextX);
-    setOQueue(nextO);
+    setLocalBoard(nextBoard);
+    setLocalXQueue(nextX);
+    setLocalOQueue(nextO);
 
     const isBlueMark = (mark === "X" ? initiator.team : defender.team) === "blue";
     soundFX.playBlitzMark(isBlueMark);
@@ -144,12 +198,12 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
           ? `${winLabel} пробивают вратаря!`
           : `${winLabel} совершают сейв!`
         : `${winLabel} выигрывают борьбу за мяч!`;
-      finishDuel(winTeam, res.line, msg, false);
+      finishLocalDuel(winTeam, res.line, msg, false);
     } else if (res.winner === "draw") {
-      finishDuel("draw", [], "Ничья в блице — мяч остаётся у владельца", false);
+      finishLocalDuel("draw", [], "Ничья в блице — мяч остаётся у владельца", false);
     } else {
       const nextMark = mark === "X" ? "O" : "X";
-      setTurnMark(nextMark);
+      setLocalTurnMark(nextMark);
       const nextLimit = getTurnTimeLimit(nextMark);
       if (nextLimit !== null) setTimeLeftMs(nextLimit);
     }
@@ -167,22 +221,35 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
       setTimeLeftMs(remaining);
       if (remaining <= 0) {
         window.clearInterval(interval);
-        const loserTeam = turnMark === "X" ? initiator.team : defender.team;
-        const winnerTeam: Team = loserTeam === "blue" ? "red" : "blue";
-        const winLabel = winnerTeam === "blue" ? "Синие" : "Красные";
-        finishDuel(winnerTeam, [], `Время вышло — ${winLabel} забирают мяч!`, loserTeam === "blue");
+        if (!isServerDriven) {
+          const loserTeam = turnMark === "X" ? initiator.team : defender.team;
+          const winnerTeam: Team = loserTeam === "blue" ? "red" : "blue";
+          const winLabel = winnerTeam === "blue" ? "Синие" : "Красные";
+          finishLocalDuel(
+            winnerTeam,
+            [],
+            `Время вышло — ${winLabel} забирают мяч!`,
+            loserTeam === "blue"
+          );
+        }
       }
     }, 50);
 
     return () => window.clearInterval(interval);
-  }, [turnMark, baseTimeLimitMs, duelStatus.finished]);
+  }, [turnMark, baseTimeLimitMs, duelStatus.finished, isServerDriven]);
 
   useEffect(() => {
-    if (!isAITurn || resolvedRef.current) return;
-    const delay = difficulty === "pro" ? 320 : difficulty === "tactical" ? 420 : 540;
+    if (!shouldRunLocalAi || resolvedRef.current) return;
+    const delay = isSpectator
+      ? 260
+      : difficulty === "pro"
+      ? 320
+      : difficulty === "tactical"
+      ? 420
+      : 540;
     const timer = window.setTimeout(() => {
       if (resolvedRef.current) return;
-      const aiMark = initiator.team === "red" ? "X" : "O";
+      const aiMark = turnMark;
       const aiQ = aiMark === "X" ? stateRef.current.xQueue : stateRef.current.oQueue;
       const humQ = aiMark === "X" ? stateRef.current.oQueue : stateRef.current.xQueue;
       const moveIdx = chooseBlitzAIMove(
@@ -201,7 +268,16 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
     }, delay);
 
     return () => window.clearTimeout(timer);
-  }, [isAITurn, board, size, winLength, difficulty, maxMarksPerPlayer]);
+  }, [
+    shouldRunLocalAi,
+    isSpectator,
+    turnMark,
+    localBoard,
+    size,
+    winLength,
+    difficulty,
+    maxMarksPerPlayer,
+  ]);
 
   const progressPct =
     currentTurnLimitMs !== null && currentTurnLimitMs > 0
@@ -223,8 +299,9 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
       <div className="w-full max-w-md pc-window p-1">
         {/* Classic Old-PC Window Title Bar */}
         <div className="pc-titlebar px-2.5 py-1.5 flex items-center justify-between gap-3">
-          <span className="font-display text-base font-bold tracking-wide truncate">
-            BLITZ_DUEL.EXE — {variantName}
+          <span className="font-display text-base font-bold tracking-wide truncate flex items-center gap-1.5">
+            {isServerDriven && <Globe className="w-3.5 h-3.5 text-sky-300 shrink-0" />}
+            <span>BLITZ_DUEL.EXE — {variantName}</span>
           </span>
           {currentTurnLimitMs !== null && (
             <span
@@ -251,12 +328,12 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
             </div>
           </div>
 
-          {/* Segmented Retro Timer Bar */}
+          {/* Segmented Win95 Timer Bar */}
           {currentTurnLimitMs !== null && (
-            <div className="pc-inset p-0.5 h-3.5 w-full">
+            <div className="pc-field p-[2px] h-4 w-full">
               <div
                 className={`h-full transition-[width] duration-75 ${
-                  timeLeftMs < 1100 ? "bg-red-700" : "bg-[#000080]"
+                  timeLeftMs < 1100 ? "bg-red-700" : "win95-progress-fill"
                 }`}
                 style={{ width: `${progressPct}%` }}
               />
@@ -272,6 +349,7 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
               const isTurn = !duelStatus.finished && turnMark === mark;
               const isBlue = piece.team === "blue";
               const bonus = isBlue ? duel.bonusTimeMsBlue : duel.bonusTimeMsRed;
+              const isYou = gameMode === "online" && piece.team === localTeam;
               return (
                 <div
                   key={piece.id}
@@ -290,6 +368,7 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
                     <div className="min-w-0">
                       <div className="text-[11px] font-bold truncate">
                         {isBlue ? "Синие" : "Красные"} · {ROLE_META[piece.role].code}
+                        {isYou ? " (Вы)" : ""}
                       </div>
                       <div
                         className={`text-[10px] truncate ${
@@ -321,7 +400,7 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
               const isFading =
                 (turnMark === "X" && idx === fadingXIdx) ||
                 (turnMark === "O" && idx === fadingOIdx);
-              const canClick = cell === null && !duelStatus.finished && !isAITurn;
+              const canClick = cell === null && !duelStatus.finished && !isWaitingForOpponent;
 
               return (
                 <button
@@ -362,7 +441,11 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
             ) : (
               <>
                 <span className="truncate">
-                  {isAITurn
+                  {isSpectator
+                    ? `Эфир: ход (${turnMark})`
+                    : gameMode === "online" && isWaitingForOpponent
+                    ? `Ожидаем ход соперника (${turnMark})...`
+                    : isWaitingForOpponent
                     ? "ИИ-агент вычисляет ход..."
                     : variant === "decay" &&
                       ((turnMark === "X" && fadingXIdx !== -1) ||

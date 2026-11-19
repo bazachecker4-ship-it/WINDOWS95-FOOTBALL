@@ -1,27 +1,29 @@
 import {
-  AIDifficulty,
   BLITZ_VARIANT_META,
+  GOAL_ROWS,
+  PITCH_COLS,
+  PITCH_ROWS,
+  ROLE_META,
+} from "../types/game.ts";
+import type {
+  AIDifficulty,
   BallState,
   BlitzComplexity,
   BlitzModePreference,
   BlitzVariant,
-  GOAL_ROWS,
   MoveOption,
-  PITCH_COLS,
-  PITCH_ROWS,
   PassOption,
   PitchType,
   PlayerPiece,
   PlayerRole,
   Position,
-  ROLE_META,
   RoleProgression,
   ShotOption,
   SquadProgressionState,
   TacticalHint,
   TacticalMentality,
   Team,
-} from "../types/game";
+} from "../types/game.ts";
 
 export function samePos(a: Position, b: Position): boolean {
   return a.col === b.col && a.row === b.row;
@@ -95,30 +97,30 @@ export function createInitialFormation(): {
   // Authentic 11 vs 11 (4-3-2-1) formation on 32x32 pitch
   const players: PlayerPiece[] = [
     // Blue Team (Left side, attacks Right -> col 31)
-    { id: "b-gk", team: "blue", role: "GK", number: 1, skinTone: 0, pos: { col: 1, row: 16 } },
-    { id: "b-lb", team: "blue", role: "DEF", number: 3, skinTone: 1, pos: { col: 5, row: 5 } },
-    { id: "b-cb1", team: "blue", role: "DEF", number: 4, skinTone: 2, pos: { col: 4, row: 12 } },
-    { id: "b-cb2", team: "blue", role: "DEF", number: 5, skinTone: 0, pos: { col: 4, row: 20 } },
-    { id: "b-rb", team: "blue", role: "DEF", number: 2, skinTone: 3, pos: { col: 5, row: 27 } },
-    { id: "b-lm", team: "blue", role: "MID", number: 6, skinTone: 1, pos: { col: 10, row: 7 } },
-    { id: "b-cm", team: "blue", role: "MID", number: 8, skinTone: 0, pos: { col: 9, row: 16 } },
-    { id: "b-rm", team: "blue", role: "MID", number: 10, skinTone: 2, pos: { col: 10, row: 25 } },
-    { id: "b-lw", team: "blue", role: "WNG", number: 11, skinTone: 3, pos: { col: 13, row: 4 } },
-    { id: "b-rw", team: "blue", role: "WNG", number: 7, skinTone: 1, pos: { col: 13, row: 28 } },
-    { id: "b-fwd", team: "blue", role: "FWD", number: 9, skinTone: 0, pos: { col: 14, row: 16 } },
+    { id: "b-gk", team: "blue", role: "GK", number: 1, skinTone: 0, stamina: 100, pos: { col: 1, row: 16 } },
+    { id: "b-lb", team: "blue", role: "DEF", number: 3, skinTone: 1, stamina: 100, pos: { col: 5, row: 5 } },
+    { id: "b-cb1", team: "blue", role: "DEF", number: 4, skinTone: 2, stamina: 100, pos: { col: 4, row: 12 } },
+    { id: "b-cb2", team: "blue", role: "DEF", number: 5, skinTone: 0, stamina: 100, pos: { col: 4, row: 20 } },
+    { id: "b-rb", team: "blue", role: "DEF", number: 2, skinTone: 3, stamina: 100, pos: { col: 5, row: 27 } },
+    { id: "b-lm", team: "blue", role: "MID", number: 6, skinTone: 1, stamina: 100, pos: { col: 10, row: 7 } },
+    { id: "b-cm", team: "blue", role: "MID", number: 8, skinTone: 0, stamina: 100, pos: { col: 9, row: 16 } },
+    { id: "b-rm", team: "blue", role: "MID", number: 10, skinTone: 2, stamina: 100, pos: { col: 10, row: 25 } },
+    { id: "b-lw", team: "blue", role: "WNG", number: 11, skinTone: 3, stamina: 100, pos: { col: 13, row: 4 } },
+    { id: "b-rw", team: "blue", role: "WNG", number: 7, skinTone: 1, stamina: 100, pos: { col: 13, row: 28 } },
+    { id: "b-fwd", team: "blue", role: "FWD", number: 9, skinTone: 0, stamina: 100, pos: { col: 14, row: 16 } },
 
     // Red Team (Right side, attacks Left -> col 0)
-    { id: "r-gk", team: "red", role: "GK", number: 1, skinTone: 2, pos: { col: 30, row: 16 } },
-    { id: "r-lb", team: "red", role: "DEF", number: 3, skinTone: 0, pos: { col: 26, row: 5 } },
-    { id: "r-cb1", team: "red", role: "DEF", number: 4, skinTone: 3, pos: { col: 27, row: 12 } },
-    { id: "r-cb2", team: "red", role: "DEF", number: 5, skinTone: 1, pos: { col: 27, row: 20 } },
-    { id: "r-rb", team: "red", role: "DEF", number: 2, skinTone: 0, pos: { col: 26, row: 27 } },
-    { id: "r-lm", team: "red", role: "MID", number: 6, skinTone: 2, pos: { col: 21, row: 7 } },
-    { id: "r-cm", team: "red", role: "MID", number: 8, skinTone: 1, pos: { col: 22, row: 16 } },
-    { id: "r-rm", team: "red", role: "MID", number: 10, skinTone: 0, pos: { col: 21, row: 25 } },
-    { id: "r-lw", team: "red", role: "WNG", number: 11, skinTone: 1, pos: { col: 18, row: 4 } },
-    { id: "r-rw", team: "red", role: "WNG", number: 7, skinTone: 3, pos: { col: 18, row: 28 } },
-    { id: "r-fwd", team: "red", role: "FWD", number: 9, skinTone: 2, pos: { col: 17, row: 16 } },
+    { id: "r-gk", team: "red", role: "GK", number: 1, skinTone: 2, stamina: 100, pos: { col: 30, row: 16 } },
+    { id: "r-lb", team: "red", role: "DEF", number: 3, skinTone: 0, stamina: 100, pos: { col: 26, row: 5 } },
+    { id: "r-cb1", team: "red", role: "DEF", number: 4, skinTone: 3, stamina: 100, pos: { col: 27, row: 12 } },
+    { id: "r-cb2", team: "red", role: "DEF", number: 5, skinTone: 1, stamina: 100, pos: { col: 27, row: 20 } },
+    { id: "r-rb", team: "red", role: "DEF", number: 2, skinTone: 0, stamina: 100, pos: { col: 26, row: 27 } },
+    { id: "r-lm", team: "red", role: "MID", number: 6, skinTone: 2, stamina: 100, pos: { col: 21, row: 7 } },
+    { id: "r-cm", team: "red", role: "MID", number: 8, skinTone: 1, stamina: 100, pos: { col: 22, row: 16 } },
+    { id: "r-rm", team: "red", role: "MID", number: 10, skinTone: 0, stamina: 100, pos: { col: 21, row: 25 } },
+    { id: "r-lw", team: "red", role: "WNG", number: 11, skinTone: 1, stamina: 100, pos: { col: 18, row: 4 } },
+    { id: "r-rw", team: "red", role: "WNG", number: 7, skinTone: 3, stamina: 100, pos: { col: 18, row: 28 } },
+    { id: "r-fwd", team: "red", role: "FWD", number: 9, skinTone: 2, stamina: 100, pos: { col: 17, row: 16 } },
   ];
 
   return {
@@ -149,7 +151,8 @@ export function evaluateCollisionComplexity(
   pitchType: PitchType = "turf",
   blitzModePref: BlitzModePreference = "dynamic",
   progression?: SquadProgressionState,
-  difficulty: AIDifficulty = "tactical"
+  difficulty: AIDifficulty = "tactical",
+  isSuperShot = false
 ): BlitzComplexity {
   let score = 0;
   const reasons: string[] = [];
@@ -187,6 +190,11 @@ export function evaluateCollisionComplexity(
   if (isShotDuel && initProg.unlockedAbilities.includes("fwd_instinct")) {
     score = Math.max(1, score - 1);
     reasons.push("Голевое чутьё (-сложность)");
+  }
+
+  if (isShotDuel && isSuperShot) {
+    score = Math.max(0, score - 1);
+    reasons.push("СУПЕР-УДАР (-сложность)");
   }
 
   let nearbySupport = 0;
@@ -321,6 +329,7 @@ export function getValidMoves(
 
   const prog = getEffectiveRoleProg(player.team, player.role, progression, difficulty);
   const speedBonus = prog.stats.speed >= 3 ? 1 : 0;
+  const tiredPenalty = (player.stamina ?? 100) < 30 ? 1 : 0;
   const sandPenalty = pitchType === "sand" ? 2 : 0;
   const iceSlideBonus = pitchType === "ice" ? 2 : 0;
 
@@ -407,7 +416,7 @@ export function getValidMoves(
       break;
     }
     case "DEF": {
-      const range = Math.max(2, 6 + speedBonus - sandPenalty);
+      const range = Math.max(2, 6 + speedBonus - sandPenalty - tiredPenalty);
       traceRay(1, 0, range);
       traceRay(-1, 0, range);
       traceRay(0, 1, range);
@@ -422,7 +431,7 @@ export function getValidMoves(
     }
     case "MID": {
       const maestroBonus = prog.unlockedAbilities.includes("mid_maestro") ? 2 : 0;
-      const range = Math.max(2, 7 + speedBonus + maestroBonus - sandPenalty);
+      const range = Math.max(2, 7 + speedBonus + maestroBonus - sandPenalty - tiredPenalty);
       traceRay(1, 1, range);
       traceRay(1, -1, range);
       traceRay(-1, 1, range);
@@ -455,11 +464,10 @@ export function getValidMoves(
       for (const [dc, dr] of knightJumps) {
         pushTarget(player.pos.col + dc, player.pos.row + dr);
       }
-      const stepRange = prog.unlockedAbilities.includes("wng_sprint")
-        ? 5
-        : speedBonus > 0
-        ? 4
-        : 3;
+      const stepRange = Math.max(
+        2,
+        (prog.unlockedAbilities.includes("wng_sprint") ? 5 : speedBonus > 0 ? 4 : 3) - tiredPenalty
+      );
       traceRay(1, 0, stepRange);
       traceRay(-1, 0, stepRange);
       traceRay(0, 1, stepRange);
@@ -468,7 +476,7 @@ export function getValidMoves(
     }
     case "FWD": {
       const baseRange = hasBall ? 5 : 7;
-      const range = Math.max(2, baseRange + speedBonus - sandPenalty);
+      const range = Math.max(2, baseRange + speedBonus - sandPenalty - tiredPenalty);
       const dirs = [
         [1, 0],
         [-1, 0],
@@ -567,7 +575,8 @@ export function getShotOptions(
   pitchType: PitchType = "turf",
   blitzModePref: BlitzModePreference = "dynamic",
   progression?: SquadProgressionState,
-  difficulty: AIDifficulty = "tactical"
+  difficulty: AIDifficulty = "tactical",
+  isSuperShot = false
 ): ShotOption[] {
   if (ball.carrierId !== player.id) return [];
 
@@ -630,7 +639,8 @@ export function getShotOptions(
           pitchType,
           blitzModePref,
           progression,
-          difficulty
+          difficulty,
+          isSuperShot
         ),
       });
     } else {
@@ -700,6 +710,7 @@ export function computeBestTacticalMove(
   const enemyPlayers = players.filter((p) => p.team !== team);
   const attackDir = team === "blue" ? 1 : -1;
   const targetGoalCol = team === "blue" ? PITCH_COLS - 1 : 0;
+  const ownGoalCol = team === "blue" ? 1 : PITCH_COLS - 2;
 
   interface ScoredAction {
     score: number;
@@ -711,26 +722,91 @@ export function computeBestTacticalMove(
     ? players.find((p) => p.id === ball.carrierId) ?? null
     : null;
 
+  const minEnemyDistAt = (pos: Position): number => {
+    let best = 99;
+    for (const e of enemyPlayers) {
+      const d = Math.hypot(e.pos.col - pos.col, e.pos.row - pos.row);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+
+  const countOpenGoalAngles = (shooterPos: Position): number => {
+    let open = 0;
+    for (const gr of GOAL_ROWS) {
+      const blocked = enemyPlayers.some((opp) => {
+        if (opp.pos.col === targetGoalCol && opp.pos.row === gr) return true;
+        if (
+          opp.role === "GK" &&
+          Math.abs(opp.pos.col - targetGoalCol) <= 2 &&
+          Math.abs(opp.pos.row - gr) <= 2
+        ) {
+          return true;
+        }
+        const dx = targetGoalCol - shooterPos.col;
+        const dy = gr - shooterPos.row;
+        const lenSq = dx * dx + dy * dy;
+        if (lenSq === 0) return false;
+        const t = ((opp.pos.col - shooterPos.col) * dx + (opp.pos.row - shooterPos.row) * dy) / lenSq;
+        if (t <= 0.05 || t >= 1.05) return false;
+        const dist = Math.hypot(
+          opp.pos.col - (shooterPos.col + t * dx),
+          opp.pos.row - (shooterPos.row + t * dy)
+        );
+        return dist < 0.85;
+      });
+      if (!blocked) open++;
+    }
+    return open;
+  };
+
+  // Identify most dangerous enemy forward/receiver when defending
+  const dangerousEnemyTarget =
+    carrier && carrier.team !== team
+      ? enemyPlayers
+          .filter((e) => e.id !== carrier.id && e.role !== "GK")
+          .sort(
+            (a, b) =>
+              Math.hypot(a.pos.col - ownGoalCol, a.pos.row - 16) -
+              Math.hypot(b.pos.col - ownGoalCol, b.pos.row - 16)
+          )[0] ?? null
+      : null;
+
+  const isPro = difficulty === "pro";
+  const isTactical = difficulty === "tactical" || isPro;
+
   for (const p of myPlayers) {
     const isCarrier = carrier?.id === p.id;
+    const stam = p.stamina ?? 100;
+    const fatiguePenalty = stam < 30 ? 14 : 0;
 
     if (isCarrier) {
       const shots = getShotOptions(p, players, ball, pitchType, blitzModePref, progression, difficulty);
+      const bestPassAvailable = getValidPasses(p, players, ball, pitchType, progression, difficulty).some(
+        (pass) => {
+          const rec = myPlayers.find((m) => m.id === pass.targetPlayerId);
+          return rec && Math.abs(rec.pos.col - targetGoalCol) <= 6 && minEnemyDistAt(rec.pos) >= 2.2;
+        }
+      );
+
       for (const shot of shots) {
         if (!shot.isContested) {
           candidates.push({
-            score: 1000,
+            score: 1200,
             hint: {
               actionType: "shoot",
               playerId: p.id,
               goalRow: shot.goalRow,
-              reason: `${ROLE_META[p.role].code} выходит на пустой угол ворот — бейте!`,
+              reason: `${ROLE_META[p.role].code} выходит на открытый угол ворот — бейте!`,
             },
           });
         } else {
-          const distPenalty = Math.abs(p.pos.col - targetGoalCol) * 3;
+          const distPenalty = Math.abs(p.pos.col - targetGoalCol) * 3.5;
+          const sizePenalty = (shot.complexity?.size ?? 3) >= 5 ? 38 : (shot.complexity?.size ?? 3) === 4 ? 12 : 0;
+          // On tactical/pro, don't force tough 5x5 long shots if a clean forward pass is open
+          const forcePenalty = isTactical && bestPassAvailable && sizePenalty > 15 ? 45 : 0;
           candidates.push({
-            score: 175 - distPenalty,
+            score: 215 - distPenalty - sizePenalty - forcePenalty,
             hint: {
               actionType: "shoot",
               playerId: p.id,
@@ -742,30 +818,44 @@ export function computeBestTacticalMove(
       }
 
       const passes = getValidPasses(p, players, ball, pitchType, progression, difficulty);
+      const passerEnemyDist = minEnemyDistAt(p.pos);
+      const passerCloseEnemies = enemyPlayers.filter(
+        (e) => Math.hypot(e.pos.col - p.pos.col, e.pos.row - p.pos.row) <= 3.5
+      ).length;
+
       for (const pass of passes) {
         const receiver = myPlayers.find((m) => m.id === pass.targetPlayerId);
         if (!receiver) continue;
 
         const progress = (receiver.pos.col - p.pos.col) * attackDir;
-        const receiverEnemyDist = Math.min(
-          ...enemyPlayers.map((e) =>
-            Math.hypot(e.pos.col - receiver.pos.col, e.pos.row - receiver.pos.row)
-          )
-        );
-        const passerEnemyDist = Math.min(
-          ...enemyPlayers.map((e) =>
-            Math.hypot(e.pos.col - p.pos.col, e.pos.row - p.pos.row)
-          )
-        );
+        const receiverEnemyDist = minEnemyDistAt(receiver.pos);
+        const recGoalDist = Math.abs(receiver.pos.col - targetGoalCol);
+        const flankSwitch = Math.abs(receiver.pos.row - p.pos.row) >= 7 && passerCloseEnemies >= 2 ? 22 : 0;
 
-        let score = 25 + progress * 9 + (receiverEnemyDist - passerEnemyDist) * 5;
-        if (receiver.role === "FWD" && progress > 0) score += 18;
-        if (
-          (team === "blue" && receiver.pos.col >= PITCH_COLS - 8) ||
-          (team === "red" && receiver.pos.col <= 7)
-        ) {
-          score += 45;
+        let nextShotSetup = 0;
+        if (isTactical && recGoalDist <= 9) {
+          const openAngles = countOpenGoalAngles(receiver.pos);
+          nextShotSetup = openAngles > 0 ? 95 + openAngles * 15 : 42;
         }
+
+        const sandPassBonus = pitchType === "sand" && progress > 0 ? 22 : 0;
+        const safetyBonus = receiverEnemyDist >= 2.8 ? 18 : receiverEnemyDist <= 1.5 ? -22 : 0;
+        const pressEscapeBonus = passerCloseEnemies >= 2 && receiverEnemyDist > passerEnemyDist ? 26 : 0;
+
+        let score =
+          32 +
+          progress * 9.5 +
+          (receiverEnemyDist - passerEnemyDist) * 6 +
+          nextShotSetup +
+          flankSwitch +
+          sandPassBonus +
+          safetyBonus +
+          pressEscapeBonus;
+
+        if (receiver.role === "FWD" && progress > 0) score += 22;
+        if (receiver.role === "WNG" && receiverEnemyDist >= 3 && progress > 1) score += 16;
+        if (recGoalDist <= 7) score += 48;
+        if (receiver.role === "GK") score -= 55;
 
         candidates.push({
           score,
@@ -774,7 +864,10 @@ export function computeBestTacticalMove(
             playerId: p.id,
             targetPlayerId: receiver.id,
             targetPos: receiver.pos,
-            reason: `${pass.isLob ? "Навесной пас" : "Пас"} на открытого ${ROLE_META[receiver.role].code} ускоряет атаку.`,
+            reason:
+              nextShotSetup >= 95
+                ? `Проникающий пас на ${ROLE_META[receiver.role].code} под открытый удар!`
+                : `${pass.isLob ? "Навесной пас" : "Пас"} на свободного ${ROLE_META[receiver.role].code} ускоряет атаку.`,
           },
         });
       }
@@ -788,63 +881,113 @@ export function computeBestTacticalMove(
       const forwardDelta = (mv.pos.col - p.pos.col) * attackDir;
       const distToBallAfter = Math.hypot(mv.pos.col - ball.pos.col, mv.pos.row - ball.pos.row);
       const distToGoalAfter = Math.hypot(mv.pos.col - targetGoalCol, mv.pos.row - 16);
+      const enemyDistAfter = minEnemyDistAt(mv.pos);
 
       if (mv.kind === "pickup") {
-        score = 240 + forwardDelta * 6;
+        score = 265 + forwardDelta * 7 + (enemyDistAfter >= 2 ? 25 : 0);
         reason = `${ROLE_META[p.role].code} забирает ничейный мяч.`;
       } else if (mv.kind === "clash") {
         const opp = enemyPlayers.find((e) => e.id === mv.opponentId);
         const oppHasBall = opp?.id === ball.carrierId;
+        const sizeFactor = mv.complexity?.size ?? 3;
         if (oppHasBall) {
-          score = 165;
-          if (mv.complexity?.size === 3) score += 20;
-          reason = `Отбор у ${opp ? ROLE_META[opp.role].code : "соперника"}: ${mv.complexity?.variantName ?? "блиц-дуэль"}.`;
+          const dangerToGoal = Math.max(0, 14 - Math.abs((opp?.pos.col ?? 16) - ownGoalCol)) * 4;
+          score = 175 + dangerToGoal + (sizeFactor === 3 ? 28 : sizeFactor === 4 ? 8 : -15);
+          reason = `Прессинг и отбор у ${opp ? ROLE_META[opp.role].code : "соперника"} (${mv.complexity?.variantName ?? "блиц"}).`;
         } else if (isCarrier) {
-          score = 15 - (mv.complexity?.size ?? 3) * 5;
+          const nearBoxBonus = Math.abs(mv.pos.col - targetGoalCol) <= 6 ? 35 : 0;
+          score = 12 + nearBoxBonus - sizeFactor * 7;
           reason = `Силовой прорыв с мячом через блиц-дуэль.`;
         } else {
-          score = 8;
+          score = 4 - sizeFactor * 2;
           reason = `Навязывание стыка на фланге.`;
         }
       } else {
         if (isCarrier) {
-          const enemyDistBefore = Math.min(
-            ...enemyPlayers.map((e) =>
-              Math.hypot(e.pos.col - p.pos.col, e.pos.row - p.pos.row)
-            )
-          );
-          const enemyDistAfter = Math.min(
-            ...enemyPlayers.map((e) =>
-              Math.hypot(e.pos.col - mv.pos.col, e.pos.row - mv.pos.row)
-            )
-          );
+          const enemyDistBefore = minEnemyDistAt(p.pos);
+          const entersShootZone =
+            team === "blue" ? mv.pos.col >= PITCH_COLS - 8 : mv.pos.col <= 7;
+          const openShotScore =
+            isTactical && entersShootZone ? countOpenGoalAngles(mv.pos) * 16 + 34 : 0;
+          const trapPenalty =
+            isTactical && enemyDistAfter <= 1.5 && Math.abs(mv.pos.col - targetGoalCol) > 6
+              ? isPro
+                ? -38
+                : -22
+              : 0;
+          const slideBonus = mv.isSlide && forwardDelta > 0 ? 18 : 0;
+          const sandDribblePenalty = pitchType === "sand" && !mv.isSlide ? -10 : 0;
+
           score =
-            50 +
-            forwardDelta * 10 +
-            (10 - Math.min(10, distToGoalAfter)) * 3 +
-            (enemyDistAfter > enemyDistBefore ? 8 : -3);
+            58 +
+            forwardDelta * 10.5 +
+            (11 - Math.min(11, distToGoalAfter)) * 3.4 +
+            (enemyDistAfter > enemyDistBefore ? 12 : -4) +
+            openShotScore +
+            trapPenalty +
+            slideBonus +
+            sandDribblePenalty;
+
           reason = mv.isSlide
             ? `Скольжение по льду: ${ROLE_META[p.role].code} уходит в отрыв!`
-            : `Дриблинг ${ROLE_META[p.role].code} ближе к штрафной соперника.`;
+            : openShotScore >= 50
+            ? `${ROLE_META[p.role].code} выходит на ударную позицию у штрафной!`
+            : `Дриблинг ${ROLE_META[p.role].code} ближе к воротам соперника.`;
         } else if (carrier && carrier.team === team) {
-          score = 15 + forwardDelta * 6 - distToGoalAfter * 0.8;
-          if (p.role === "GK") score -= 35;
-          reason = `Открывание ${ROLE_META[p.role].code} под передачу в атаку.`;
+          const receiverSpaceBonus = enemyDistAfter >= 3 ? 12 : -6;
+          const laneSpread = Math.abs(mv.pos.row - carrier.pos.row) >= 4 ? 10 : -5;
+          const wngJumpBonus = pitchType === "obstacles" && p.role === "WNG" && forwardDelta >= 3 ? 16 : 0;
+          score =
+            16 +
+            forwardDelta * 6.5 -
+            distToGoalAfter * 0.9 +
+            receiverSpaceBonus +
+            laneSpread +
+            wngJumpBonus -
+            fatiguePenalty;
+          if (p.role === "GK") score -= 45;
+          reason = `Открывание ${ROLE_META[p.role].code} в свободную зону под пас.`;
         } else if (carrier && carrier.team !== team) {
           const oppDistBefore = Math.hypot(p.pos.col - carrier.pos.col, p.pos.row - carrier.pos.row);
           const oppDistAfter = Math.hypot(mv.pos.col - carrier.pos.col, mv.pos.row - carrier.pos.row);
-          score = 28 + (oppDistBefore - oppDistAfter) * 9;
-          if (p.role === "GK") {
-            const goalDist = Math.hypot(
-              mv.pos.col - (team === "blue" ? 1 : PITCH_COLS - 2),
-              mv.pos.row - 16
-            );
-            score += goalDist <= 3 ? 25 : -45;
+
+          // Stay goal-side of enemy ball carrier
+          const isGoalSide =
+            team === "blue" ? mv.pos.col <= carrier.pos.col : mv.pos.col >= carrier.pos.col;
+          const goalSideBonus = isGoalSide ? 18 : -16;
+
+          // Passing lane intercept bonus toward top enemy striker
+          let laneBlockBonus = 0;
+          if (isTactical && dangerousEnemyTarget) {
+            const dx = dangerousEnemyTarget.pos.col - carrier.pos.col;
+            const dy = dangerousEnemyTarget.pos.row - carrier.pos.row;
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq > 0) {
+              const t =
+                ((mv.pos.col - carrier.pos.col) * dx + (mv.pos.row - carrier.pos.row) * dy) / lenSq;
+              if (t > 0.1 && t < 0.9) {
+                const distToLine = Math.hypot(
+                  mv.pos.col - (carrier.pos.col + t * dx),
+                  mv.pos.row - (carrier.pos.row + t * dy)
+                );
+                if (distToLine < 1.6) laneBlockBonus = 24;
+              }
+            }
           }
-          reason = `${ROLE_META[p.role].code} прессингует и перекрывает зону мяча.`;
+
+          score = 30 + (oppDistBefore - oppDistAfter) * 9 + goalSideBonus + laneBlockBonus - fatiguePenalty * 0.5;
+          if (p.role === "GK") {
+            const goalDist = Math.hypot(mv.pos.col - ownGoalCol, mv.pos.row - Math.max(13, Math.min(18, ball.pos.row)));
+            score += goalDist <= 2 ? 32 : -55;
+          }
+          reason =
+            laneBlockBonus > 0
+              ? `${ROLE_META[p.role].code} перекрывает линию передачи и страхует зону.`
+              : `${ROLE_META[p.role].code} прессингует и сужает пространство у мяча.`;
         } else {
           const distBefore = Math.hypot(p.pos.col - ball.pos.col, p.pos.row - ball.pos.row);
-          score = 45 + (distBefore - distToBallAfter) * 12;
+          score = 48 + (distBefore - distToBallAfter) * 13 - fatiguePenalty * 0.4;
+          if (p.role === "GK") score -= 35;
           reason = `${ROLE_META[p.role].code} сближается с ничейным мячом.`;
         }
       }
@@ -1001,4 +1144,49 @@ export function applyDynamicOffBallRuns(
   }
 
   return nextPlayers;
+}
+
+export function updateSquadStamina(
+  players: PlayerPiece[],
+  actorId: string,
+  moveDist: number,
+  mentality: TacticalMentality = "balance"
+): PlayerPiece[] {
+  const actor = players.find((p) => p.id === actorId);
+  const actorTeam = actor?.team;
+  const drain = moveDist > 0 ? Math.min(26, 9 + Math.round(moveDist * 2.2)) : 6;
+  const recover = mentality === "defend" ? 12 : mentality === "attack" ? 6 : 9;
+
+  return players.map((p) => {
+    const cur = p.stamina ?? 100;
+    if (p.id === actorId) {
+      return { ...p, stamina: Math.max(10, cur - drain) };
+    }
+    if (p.team === actorTeam) {
+      return { ...p, stamina: Math.min(100, cur + recover) };
+    }
+    return p;
+  });
+}
+
+export function getQuickSwitchCandidates(
+  team: Team,
+  players: PlayerPiece[],
+  ball: BallState,
+  limit = 4
+): PlayerPiece[] {
+  const teamPlayers = players.filter((p) => p.team === team);
+  const carrier = ball.carrierId ? teamPlayers.find((p) => p.id === ball.carrierId) ?? null : null;
+
+  const sorted = [...teamPlayers].sort((a, b) => {
+    if (carrier && a.id === carrier.id) return -1;
+    if (carrier && b.id === carrier.id) return 1;
+    const aGkPenalty = a.role === "GK" ? 12 : 0;
+    const bGkPenalty = b.role === "GK" ? 12 : 0;
+    const da = Math.hypot(a.pos.col - ball.pos.col, a.pos.row - ball.pos.row) + aGkPenalty;
+    const db = Math.hypot(b.pos.col - ball.pos.col, b.pos.row - ball.pos.row) + bGkPenalty;
+    return da - db;
+  });
+
+  return sorted.slice(0, limit);
 }

@@ -16,10 +16,18 @@ import {
 } from "../types/game";
 import { ChessPieceIcon } from "./ChessPieceIcon";
 import { drawPlayerPreviewToCanvas } from "../pixi/pixelArtTextures";
-import { Check, Lock, Plus, Sparkles, X } from "lucide-react";
+import { Check, Lock, Plus, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Win95Window } from "./Win95Window";
 
 interface SquadModalProps {
   progression: SquadProgressionState;
+  zIndex: number;
+  isActive: boolean;
+  isMinimized?: boolean;
+  cascadeIndex?: number;
+  topBoundary?: number;
+  onFocus: () => void;
+  onMinimize?: () => void;
   onUpgradeStat: (role: PlayerRole, stat: keyof RoleProgression["stats"]) => void;
   onUnlockAbility: (role: PlayerRole, abilityId: AbilityId, cost: number) => void;
   onUpdateAppearance: (role: PlayerRole, patch: Partial<RoleAppearance>) => void;
@@ -39,6 +47,13 @@ const STAT_META: Array<{
 
 export const SquadModal: React.FC<SquadModalProps> = ({
   progression,
+  zIndex,
+  isActive,
+  isMinimized,
+  cascadeIndex = 2,
+  topBoundary = 40,
+  onFocus,
+  onMinimize,
   onUpgradeStat,
   onUnlockAbility,
   onUpdateAppearance,
@@ -64,29 +79,29 @@ export const SquadModal: React.FC<SquadModalProps> = ({
   }, [activeRole, roleProg.appearance]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Команда, прокачка и кастомизация"
+    <Win95Window
+      title="SQUAD_MANAGER.EXE — Команда и Прокачка"
+      icon={<SlidersHorizontal className="w-3.5 h-3.5 text-emerald-300 shrink-0" />}
+      ariaLabel="Команда, прокачка и кастомизация"
+      zIndex={zIndex}
+      isActive={isActive}
+      isMinimized={isMinimized}
+      cascadeIndex={cascadeIndex}
+      topBoundary={topBoundary}
+      defaultWidth={680}
+      defaultHeight={600}
+      minWidth={320}
+      minHeight={380}
+      onFocus={onFocus}
+      onMinimize={onMinimize}
+      onClose={onClose}
+      statusBarPanes={[
+        { text: `Роль: ${ROLE_META[activeRole].name}`, flex: true },
+        { text: `Очки: ${progression.skillPoints}` },
+        { text: `Матчей: ${progression.matchesPlayed}` },
+      ]}
     >
-      <div className="w-full max-w-2xl max-h-[92dvh] overflow-y-auto pc-window p-1">
-        {/* Title Bar */}
-        <div className="pc-titlebar px-3 py-1.5 flex items-center justify-between gap-4">
-          <span className="font-display text-base font-bold tracking-wide truncate">
-            SQUAD_MANAGER.EXE — Команда и Прокачка
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Закрыть окно команды"
-            className="pc-btn w-6 h-6 flex items-center justify-center cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="p-4 space-y-3.5">
+      <div className="p-3.5 space-y-3.5 overflow-y-auto flex-1">
           {/* Status Strip */}
           <div className="pc-inset px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono tabular-nums text-slate-900">
             <span className="font-bold text-blue-900">
@@ -137,12 +152,12 @@ export const SquadModal: React.FC<SquadModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0 self-start sm:self-center">
+            <div className="flex items-end gap-0.5 shrink-0 self-start sm:self-center">
               <button
                 type="button"
                 onClick={() => setTab("stats")}
                 className={`px-3 py-1.5 text-xs font-bold whitespace-nowrap cursor-pointer ${
-                  tab === "stats" ? "pc-btn-active" : "pc-btn"
+                  tab === "stats" ? "win95-tab-active" : "win95-tab"
                 }`}
               >
                 Навыки
@@ -151,7 +166,7 @@ export const SquadModal: React.FC<SquadModalProps> = ({
                 type="button"
                 onClick={() => setTab("look")}
                 className={`px-3 py-1.5 text-xs font-bold whitespace-nowrap cursor-pointer ${
-                  tab === "look" ? "pc-btn-active" : "pc-btn"
+                  tab === "look" ? "win95-tab-active" : "win95-tab"
                 }`}
               >
                 Внешний вид
@@ -332,8 +347,7 @@ export const SquadModal: React.FC<SquadModalProps> = ({
               </div>
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </Win95Window>
   );
 };

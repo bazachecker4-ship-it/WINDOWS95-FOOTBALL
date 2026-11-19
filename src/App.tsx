@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AIDifficulty,
+  AIOpponentEngine,
+  AIPace,
   AbilityId,
   ActiveBlitzDuel,
   BallFlightEvent,
   BallState,
   BlitzModePreference,
   BlitzPace,
+  CameraPreset,
   CommentaryItem,
   FloatingCallout,
   GameMode,
   GamePhase,
+  LiveMatchSummary,
   MAX_TURNS,
   MatchStats,
+  MatchTelemetryStats,
   PITCH_COLS,
   PitchType,
   PlayerPiece,
@@ -21,6 +26,7 @@ import {
   ROLE_META,
   RoleAppearance,
   RoleProgression,
+  ServerMatchSnapshot,
   SquadProgressionState,
   TARGET_GOALS,
   TacticalMentality,
@@ -32,10 +38,12 @@ import {
   computeDuelBonusTimes,
   createInitialFormation,
   findSafeKnockbackSquare,
+  getQuickSwitchCandidates,
   getShotOptions,
   getValidMoves,
   getValidPasses,
   samePos,
+  updateSquadStamina,
 } from "./engine/footballEngine";
 import {
   awardMatchRewards,
@@ -50,6 +58,12 @@ import { BlitzDuelModal } from "./components/BlitzDuelModal";
 import { OverlayHUD } from "./components/OverlayHUD";
 import { SquadModal } from "./components/SquadModal";
 import { CoachModal } from "./components/CoachModal";
+import { MultiplayerLobbyModal } from "./components/MultiplayerLobbyModal";
+import { ProfileModal } from "./components/ProfileModal";
+import { ChallengeModal } from "./components/ChallengeModal";
+import { DesktopWindowId } from "./components/Win95Window";
+import { UserProfile, loadUserProfile, saveUserProfile } from "./engine/profile";
+import { LobbySnapshotState, mpClient } from "./services/multiplayerClient";
 import { soundFX } from "./utils/sound";
 
 interface CommentaryRequest {
@@ -88,13 +102,25 @@ function emptyMatchStats(): MatchStats {
   };
 }
 
+function pickLine(options: string[]): string {
+  return options[Math.floor(Math.random() * options.length)];
+}
+
 function instantLocalLine(req: CommentaryRequest): string {
   const teamName = req.team === "blue" ? "Синие" : "Красные";
+  const role = req.playerRole || "игрок";
   switch (req.eventType) {
     case "kickoff":
-      return `Матч начался! ${teamName} разыгрывают мяч с центра поля.`;
+      return pickLine([
+        `Матч начался! ${teamName} разыгрывают мяч с центра поля.`,
+        `Стартовый свисток! Команды 11 на 11 вступают в борьбу.`,
+      ]);
     case "pass":
-      return `Точный пас на ${req.playerRole || "партнёра"} — ${teamName} ускоряют атаку.`;
+      return pickLine([
+        `Точный пас на ${role} — ${teamName} ускоряют атаку.`,
+        `Отличный перевод! ${role} открывается в свободной зоне.`,
+        `В касание! ${teamName} разыгрывают комбинацию через ${role}.`,
+      ]);
     case "blitz_start":
       return `Столкновение! ${req.blitzVariant || `Блиц ${req.blitzSize || 3}×${req.blitzSize || 3}`} за владение мячом!`;
     case "blitz_win":
@@ -110,7 +136,11 @@ function instantLocalLine(req: CommentaryRequest): string {
         ? `Финальный свисток! Ничья ${req.scoreBlue}:${req.scoreRed}.`
         : `Матч окончен! ${req.winner === "blue" ? "Синие" : "Красные"} побеждают ${req.scoreBlue}:${req.scoreRed}!`;
     default:
-      return `${teamName}: ${req.playerRole || "игрок"} перестраивается на поле.`;
+      return pickLine([
+        `${teamName}: ${role} перестраивается на поле.`,
+        `Динамичный рывок: ${role} занимает выгодную клетку.`,
+        `${teamName} смещают акцент атаки через ${role}.`,
+      ]);
   }
 }
 
@@ -120,7 +150,11 @@ export default function App() {
   const [phase, setPhase] = useState<GamePhase>("TITLE_MENU");
   const [gameMode, setGameMode] = useState<GameMode>("ai");
   const [difficulty, setDifficulty] = useState<AIDifficulty>("tactical");
+  const [aiEngine, setAiEngine] = useState<AIOpponentEngine>("groq");
+  const [aiAgentBadge, setAiAgentBadge] = useState<string | null>(null);
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>("tv");
   const [blitzPace, setBlitzPace] = useState<BlitzPace>("blitz");
+  const [aiPace, setAiPace] = useState<AIPace>("normal");
   const [pitchType, setPitchType] = useState<PitchType>("turf");
   const [blitzModePref, setBlitzModePref] = useState<BlitzModePreference>("dynamic");
 
@@ -128,8 +162,187 @@ export default function App() {
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [showCoachHint, setShowCoachHint] = useState(true);
 
-  const [squadModalOpen, setSquadModalOpen] = useState(false);
-  const [coachModalOpen, setCoachModalOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [openWindows, setOpenWindows] = useState<DesktopWindowId[]>(() =>
+    userProfile.created ? ["setup"] : ["setup", "profile"]
+  );
+  const [minimizedWindows, setMinimizedWindows] = useState<DesktopWindowId[]>([]);
+  const [isSpectating, setIsSpectating] = useState(false);
+  const [localAiDerby, setLocalAiDerby] = useState(false);
+
+  const [lobbyState, setLobbyState] = useState<LobbySnapshotState>(() => mpClient.getState());
+  const [onlineMatchId, setOnlineMatchId] = useState<string | null>(null);
+  const [localTeam, setLocalTeam] = useState<Team>("blue");
+  const [spectateMatchId, setSpectateMatchId] = useState<string | null>(null);
+  const [serverMatch, setServerMatch] = useState<ServerMatchSnapshot | null>(null);
+
+  const openWindow = useCallback((id: DesktopWindowId) => {
+    setMinimizedWindows((prev) => prev.filter((w) => w !== id));
+    setOpenWindows((prev) => [...prev.filter((w) => w !== id), id]);
+  }, []);
+
+  const focusWindow = useCallback((id: DesktopWindowId) => {
+    setMinimizedWindows((prev) => prev.filter((w) => w !== id));
+    setOpenWindows((prev) => {
+      if (!prev.includes(id)) return [...prev, id];
+      if (prev[prev.length - 1] === id) return prev;
+      return [...prev.filter((w) => w !== id), id];
+    });
+  }, []);
+
+  const minimizeWindow = useCallback((id: DesktopWindowId) => {
+    setMinimizedWindows((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
+  const closeWindow = useCallback((id: DesktopWindowId) => {
+    setOpenWindows((prev) => prev.filter((w) => w !== id));
+    setMinimizedWindows((prev) => prev.filter((w) => w !== id));
+  }, []);
+
+  const activeWindowId = useMemo<DesktopWindowId | null>(() => {
+    for (let i = openWindows.length - 1; i >= 0; i--) {
+      if (!minimizedWindows.includes(openWindows[i])) {
+        return openWindows[i];
+      }
+    }
+    return null;
+  }, [openWindows, minimizedWindows]);
+
+  const toggleTaskbarWindow = useCallback(
+    (id: DesktopWindowId) => {
+      if (minimizedWindows.includes(id) || activeWindowId !== id) {
+        focusWindow(id);
+      } else {
+        minimizeWindow(id);
+      }
+    },
+    [minimizedWindows, activeWindowId, focusWindow, minimizeWindow]
+  );
+
+  const getWindowZ = useCallback(
+    (id: DesktopWindowId) => {
+      const idx = openWindows.indexOf(id);
+      return idx === -1 ? 30 : 30 + idx;
+    },
+    [openWindows]
+  );
+
+  const hasVisibleModalWindow = useMemo(
+    () =>
+      openWindows.some(
+        (w) => w !== "setup" && !minimizedWindows.includes(w)
+      ),
+    [openWindows, minimizedWindows]
+  );
+
+  const pendingInviteRef = useRef<{ roomId: string; challengeCode?: string; club?: string } | null>(null);
+  const lastBallFlightNonceRef = useRef<number>(0);
+  const lastCalloutIdRef = useRef<string | null>(null);
+  const humanAiLiveIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    mpClient.updateProfile(userProfile.clubName, userProfile.managerName);
+  }, [userProfile.clubName, userProfile.managerName]);
+
+  useEffect(() => {
+    const unsubLobby = mpClient.subscribeLobby((next) => setLobbyState(next));
+    return () => unsubLobby();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const roomId = params.get("room");
+      const challengeCode = params.get("challenge") ?? undefined;
+      const club = params.get("club") ?? undefined;
+      if (roomId || challengeCode) {
+        pendingInviteRef.current = {
+          roomId: roomId || `chal-${challengeCode}`,
+          challengeCode,
+          club,
+        };
+        triggerBanner(
+          `⚔️ Вызов${club ? ` от «${club}»` : ""}! Подключаемся к комнате...`,
+          "gold"
+        );
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (lobbyState.connected && pendingInviteRef.current) {
+      const invite = pendingInviteRef.current;
+      pendingInviteRef.current = null;
+      mpClient.joinRoom(invite.roomId, invite.challengeCode);
+    }
+  }, [lobbyState.connected]);
+
+  const handleSaveProfile = (p: UserProfile) => {
+    setUserProfile(p);
+    saveUserProfile(p);
+    mpClient.updateProfile(p.clubName, p.managerName);
+    closeWindow("profile");
+    triggerBanner(`Профиль и клуб «${p.clubName}» успешно сохранены!`, "gold");
+  };
+
+  const handleSpectateLiveMatch = useCallback(
+    (match: LiveMatchSummary) => {
+      closeWindow("lobby");
+      if (humanAiLiveIdRef.current) {
+        mpClient.unpublishLiveMatch(humanAiLiveIdRef.current);
+        humanAiLiveIdRef.current = null;
+      }
+      setOnlineMatchId(null);
+      setLocalAiDerby(false);
+      mpClient.joinSpectate(match.id);
+      triggerBanner(`👁️ Подключение к трансляции: ${match.roomName}...`, "gold");
+    },
+    [closeWindow]
+  );
+
+  const handleSwitchSpectateMatch = useCallback((match: LiveMatchSummary) => {
+    mpClient.joinSpectate(match.id);
+    triggerBanner(`📺 Переключение канала: ${match.roomName}`, "gold");
+  }, []);
+
+  const handleSendSpectateReaction = useCallback(
+    (text: string) => {
+      if (!spectateMatchId) return;
+      mpClient.sendSpectateReaction(spectateMatchId, text);
+    },
+    [spectateMatchId]
+  );
+
+  const handleExitSpectate = useCallback(() => {
+    clearTimers();
+    if (spectateMatchId) {
+      mpClient.leaveSpectate(spectateMatchId);
+    }
+    setSpectateMatchId(null);
+    setServerMatch(null);
+    setActiveDuel(null);
+    setIsSpectating(false);
+    setLocalAiDerby(false);
+    setPhase("TITLE_MENU");
+    openWindow("lobby");
+  }, [spectateMatchId, openWindow]);
+
+  const handleAcceptChallenge = useCallback(
+    (roomOrOpponent: string, challengeCode?: string) => {
+      closeWindow("challenge");
+      if (challengeCode || roomOrOpponent.startsWith("chal-") || roomOrOpponent.startsWith("room-")) {
+        mpClient.joinRoom(roomOrOpponent, challengeCode);
+        triggerBanner(`⚔️ Подключение к дуэли ${challengeCode ? `#${challengeCode}` : ""}...`, "gold");
+      } else {
+        startNewMatch("ai", "tactical", blitzPace, pitchType, blitzModePref, false, "groq");
+        triggerBanner(`⚔️ Вызов принят! Матч против «${roomOrOpponent}»`, "gold");
+      }
+    },
+    [closeWindow, blitzPace, pitchType, blitzModePref]
+  );
+
   const [progression, setProgression] = useState<SquadProgressionState>(() =>
     loadSquadProgression()
   );
@@ -237,6 +450,8 @@ export default function App() {
     [ttsEnabled]
   );
 
+  const lastAiCommentaryAtRef = useRef(0);
+
   const pushCommentary = useCallback(
     async (req: CommentaryRequest) => {
       const id = `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -255,11 +470,25 @@ export default function App() {
         ...prev.slice(0, 14),
       ]);
 
-      const shouldCallAI =
-        req.eventType !== "move" || moveCounterRef.current % 2 === 0;
-      moveCounterRef.current += 1;
-      if (!shouldCallAI) return;
+      if (req.eventType === "goal" || req.eventType === "save") {
+        speakLine(fallbackText);
+      }
 
+      // Only request Gemini commentary for major highlights & respect rate-limit budget
+      const now = Date.now();
+      const isHighlight =
+        req.eventType === "goal" ||
+        req.eventType === "save" ||
+        req.eventType === "match_end" ||
+        req.eventType === "kickoff" ||
+        req.eventType === "blitz_win";
+      const isCritical =
+        req.eventType === "goal" || req.eventType === "save" || req.eventType === "match_end";
+
+      if (!isHighlight) return;
+      if (!isCritical && now - lastAiCommentaryAtRef.current < 15000) return;
+
+      lastAiCommentaryAtRef.current = now;
       setIsCommentaryLoading(true);
       try {
         const resp = await fetch("/api/commentary", {
@@ -271,7 +500,10 @@ export default function App() {
           }),
         });
         if (!resp.ok) return;
-        const data = (await resp.json()) as { text?: string; source?: "gemini" | "local" };
+        const data = (await resp.json()) as {
+          text?: string;
+          source?: "gemini" | "groq" | "local";
+        };
         if (data.text) {
           setCommentaryLog((prev) =>
             prev.map((item) =>
@@ -280,9 +512,6 @@ export default function App() {
                 : item
             )
           );
-          if (req.eventType === "goal" || req.eventType === "blitz_start" || req.eventType === "save") {
-            speakLine(data.text);
-          }
         }
       } catch {
         // Keep local fallback
@@ -294,13 +523,20 @@ export default function App() {
   );
 
   const finalizeMatchRewards = useCallback(
-    (finalBlueScore: number, finalRedScore: number, statsSnapshot: MatchStats) => {
-      if (matchRewardedRef.current) return;
+    (
+      finalBlueScore: number,
+      finalRedScore: number,
+      statsSnapshot: MatchStats,
+      teamSide: Team = "blue"
+    ) => {
+      if (matchRewardedRef.current || isSpectating) return;
       matchRewardedRef.current = true;
-      const winBonus = finalBlueScore > finalRedScore ? 35 : finalBlueScore === finalRedScore ? 20 : 10;
+      const myScore = teamSide === "blue" ? finalBlueScore : finalRedScore;
+      const oppScore = teamSide === "blue" ? finalRedScore : finalBlueScore;
+      const winBonus = myScore > oppScore ? 35 : myScore === oppScore ? 20 : 10;
       const earnedXp =
         winBonus +
-        finalBlueScore * 20 +
+        myScore * 20 +
         statsSnapshot.blitzWon * 10 +
         Math.min(20, statsSnapshot.passes * 3);
 
@@ -308,22 +544,36 @@ export default function App() {
         const { next, pointsEarned } = awardMatchRewards(
           prev,
           earnedXp,
-          finalBlueScore,
+          myScore,
           statsSnapshot.blitzWon,
           true
         );
         setLastMatchReward({ xp: earnedXp, points: pointsEarned });
         return next;
       });
+
+      setUserProfile((prev) => {
+        const won = myScore > oppScore ? 1 : 0;
+        const lost = oppScore > myScore ? 1 : 0;
+        const updated: UserProfile = {
+          ...prev,
+          matchesWon: prev.matchesWon + won,
+          matchesLost: prev.matchesLost + lost,
+          trophies: prev.trophies + won,
+        };
+        saveUserProfile(updated);
+        return updated;
+      });
     },
-    []
+    [isSpectating]
   );
 
   const isHumanTurn =
     phase === "PLAYING" &&
-    !squadModalOpen &&
-    !coachModalOpen &&
-    (gameMode === "local" || currentTurn === "blue");
+    !isSpectating &&
+    !hasVisibleModalWindow &&
+    (gameMode === "local" ||
+      (gameMode === "online" ? currentTurn === localTeam : currentTurn === "blue"));
 
   const selectedPlayer = useMemo(
     () => players.find((p) => p.id === selectedPlayerId) ?? null,
@@ -352,10 +602,16 @@ export default function App() {
     return getValidPasses(selectedPlayer, players, ball, pitchType, progression, difficulty);
   }, [selectedPlayer, currentTurn, phase, players, ball, pitchType, progression, difficulty]);
 
+  const quickSwitchPlayers = useMemo(
+    () => getQuickSwitchCandidates(currentTurn, players, ball, 4),
+    [currentTurn, players, ball]
+  );
+
   const validShots = useMemo(() => {
     if (!selectedPlayer || selectedPlayer.team !== currentTurn || phase !== "PLAYING") {
       return [];
     }
+    const useSuperShot = superDriveReady && currentTurn === "blue";
     return getShotOptions(
       selectedPlayer,
       players,
@@ -363,9 +619,21 @@ export default function App() {
       pitchType,
       blitzModePref,
       progression,
-      difficulty
+      difficulty,
+      useSuperShot
     );
-  }, [selectedPlayer, currentTurn, phase, players, ball, pitchType, blitzModePref, progression, difficulty]);
+  }, [
+    selectedPlayer,
+    currentTurn,
+    phase,
+    players,
+    ball,
+    pitchType,
+    blitzModePref,
+    progression,
+    difficulty,
+    superDriveReady,
+  ]);
 
   const coachHint = useMemo(() => {
     if (!showCoachHint || !isHumanTurn) return null;
@@ -438,20 +706,19 @@ export default function App() {
     [pitchType, pushCommentary, finalizeMatchRewards]
   );
 
-  // FIFA Mobile Quick-Flow: Auto-focus blue ball carrier when your turn begins
+  // FIFA Mobile Quick-Flow: Auto-focus ball carrier OR closest defender when your turn begins
   useEffect(() => {
-    if (
-      phase === "PLAYING" &&
-      isHumanTurn &&
-      !selectedPlayerId &&
-      ball.carrierId
-    ) {
-      const carrier = players.find((p) => p.id === ball.carrierId);
+    if (phase === "PLAYING" && isHumanTurn && !selectedPlayerId) {
+      const carrier = ball.carrierId
+        ? players.find((p) => p.id === ball.carrierId) ?? null
+        : null;
       if (carrier && carrier.team === currentTurn) {
         setSelectedPlayerId(carrier.id);
+      } else if (quickSwitchPlayers.length > 0) {
+        setSelectedPlayerId(quickSwitchPlayers[0].id);
       }
     }
-  }, [phase, isHumanTurn, selectedPlayerId, ball.carrierId, players, currentTurn]);
+  }, [phase, isHumanTurn, selectedPlayerId, ball.carrierId, players, currentTurn, quickSwitchPlayers]);
 
   const scoreGoal = useCallback(
     (scoringTeam: Team, scorerRole: string, statsSnapshot: MatchStats) => {
@@ -506,6 +773,17 @@ export default function App() {
 
   const executeMove = useCallback(
     (player: PlayerPiece, targetPos: Position) => {
+      if (gameMode === "online" && onlineMatchId) {
+        soundFX.playMove();
+        setSelectedPlayerId(null);
+        mpClient.sendMatchAction(onlineMatchId, {
+          actionType: "move",
+          playerId: player.id,
+          targetPos,
+        });
+        return;
+      }
+
       const moves = getValidMoves(
         player,
         players,
@@ -574,6 +852,7 @@ export default function App() {
       soundFX.playMove();
       setLastMoveTrace({ from: player.pos, to: chosen.pos, team: player.team });
 
+      const moveDist = Math.hypot(chosen.pos.col - player.pos.col, chosen.pos.row - player.pos.row);
       const movedPlayers = players.map((p) =>
         p.id === player.id ? { ...p, pos: chosen.pos } : p
       );
@@ -588,11 +867,10 @@ export default function App() {
         triggerCallout(chosen.pos, "СКОЛЬЖЕНИЕ!", 0x38bdf8);
       }
 
-      const dynamicPlayers = applyDynamicOffBallRuns(
-        movedPlayers,
+      const dynamicPlayers = updateSquadStamina(
+        applyDynamicOffBallRuns(movedPlayers, player.id, updatedBall, pitchType, mentality),
         player.id,
-        updatedBall,
-        pitchType,
+        moveDist,
         mentality
       );
       setPlayers(dynamicPlayers);
@@ -633,6 +911,8 @@ export default function App() {
       advanceTurnOrEndMatch(scoreBlue, scoreRed, player.team, turnCount, nextStats);
     },
     [
+      gameMode,
+      onlineMatchId,
       players,
       ball,
       pitchType,
@@ -655,6 +935,17 @@ export default function App() {
 
   const executePass = useCallback(
     (passer: PlayerPiece, receiverId: string) => {
+      if (gameMode === "online" && onlineMatchId) {
+        soundFX.playPass();
+        setSelectedPlayerId(null);
+        mpClient.sendMatchAction(onlineMatchId, {
+          actionType: "pass",
+          playerId: passer.id,
+          targetPlayerId: receiverId,
+        });
+        return;
+      }
+
       const receiver = players.find((p) => p.id === receiverId);
       if (!receiver || ball.carrierId !== passer.id) return;
 
@@ -684,11 +975,10 @@ export default function App() {
       setLastMoveTrace({ from: passer.pos, to: receiver.pos, team: passer.team });
 
       const updatedBall: BallState = { pos: receiver.pos, carrierId: receiver.id };
-      const dynamicPlayers = applyDynamicOffBallRuns(
-        players,
-        receiver.id,
-        updatedBall,
-        pitchType,
+      const dynamicPlayers = updateSquadStamina(
+        applyDynamicOffBallRuns(players, receiver.id, updatedBall, pitchType, mentality),
+        passer.id,
+        1.5,
         mentality
       );
       setPlayers(dynamicPlayers);
@@ -729,6 +1019,8 @@ export default function App() {
       advanceTurnOrEndMatch(scoreBlue, scoreRed, passer.team, turnCount, nextStats);
     },
     [
+      gameMode,
+      onlineMatchId,
       players,
       ball,
       matchStats,
@@ -748,6 +1040,18 @@ export default function App() {
 
   const executeShot = useCallback(
     (shooter: PlayerPiece, goalRow: number) => {
+      if (gameMode === "online" && onlineMatchId) {
+        soundFX.playMove();
+        setSelectedPlayerId(null);
+        mpClient.sendMatchAction(onlineMatchId, {
+          actionType: "shoot",
+          playerId: shooter.id,
+          goalRow,
+        });
+        return;
+      }
+
+      const useSuperShot = superDriveReady && shooter.team === "blue";
       const shots = getShotOptions(
         shooter,
         players,
@@ -755,10 +1059,17 @@ export default function App() {
         pitchType,
         blitzModePref,
         progression,
-        difficulty
+        difficulty,
+        useSuperShot
       );
       const shot = shots.find((s) => s.goalRow === goalRow);
       if (!shot) return;
+
+      if (useSuperShot) {
+        setSuperDriveReady(false);
+        setMomentum(0);
+        setComboStreak(0);
+      }
 
       let nextStats = matchStats;
       if (shooter.team === "blue") {
@@ -781,6 +1092,7 @@ export default function App() {
         to: { col: goalCol, row: goalRow },
         isLob: false,
         isShot: true,
+        isSuperShot: useSuperShot,
       });
       setLastMoveTrace({
         from: shooter.pos,
@@ -789,7 +1101,7 @@ export default function App() {
       });
 
       if (!shot.isContested || !shot.defenderId || !shot.complexity) {
-        triggerCallout({ col: goalCol, row: goalRow }, "ГОООЛ!", 0x4ade80);
+        triggerCallout({ col: goalCol, row: goalRow }, useSuperShot ? "СУПЕР-ГОЛ!" : "ГОООЛ!", 0x4ade80);
         scoreGoal(shooter.team, ROLE_META[shooter.role].name, nextStats);
         return;
       }
@@ -807,9 +1119,13 @@ export default function App() {
         progression,
         difficulty
       );
+      const superBonus = useSuperShot ? 1000 : 0;
 
       soundFX.playBlitzStart();
-      triggerBanner("ОПАСНЫЙ УДАР! ДУЭЛЬ С ВРАТАРЁМ!", shooter.team === "blue" ? "blue" : "red");
+      triggerBanner(
+        useSuperShot ? "СУПЕР-УДАР ПО ВОРОТАМ!" : "ОПАСНЫЙ УДАР! ДУЭЛЬ С ВРАТАРЁМ!",
+        useSuperShot ? "gold" : shooter.team === "blue" ? "blue" : "red"
+      );
       setSelectedPlayerId(null);
       setActiveDuel({
         initiatorId: shooter.id,
@@ -817,10 +1133,11 @@ export default function App() {
         contestedPos: { col: goalCol, row: goalRow },
         initiatorOrigin: shooter.pos,
         isShotDuel: true,
+        isSuperShot: useSuperShot,
         goalRow,
         complexity: shot.complexity,
         ballOwnerBeforeId: shooter.id,
-        bonusTimeMsBlue: blueBonusMs,
+        bonusTimeMsBlue: blueBonusMs + superBonus,
         bonusTimeMsRed: redBonusMs,
       });
       setPhase("BLITZ_DUEL");
@@ -840,23 +1157,29 @@ export default function App() {
       });
     },
     [
+      gameMode,
+      onlineMatchId,
       players,
       ball,
       pitchType,
       blitzModePref,
       progression,
       difficulty,
+      superDriveReady,
       matchStats,
       scoreBlue,
       scoreRed,
       turnCount,
       scoreGoal,
       pushCommentary,
+      triggerBanner,
+      triggerCallout,
     ]
   );
 
   const handleResolveDuel = useCallback(
     (winnerTeam: Team | "draw", _outcomeText: string, wasTimeout: boolean) => {
+      if (gameMode === "online" || isSpectating) return;
       if (!activeDuel) return;
       const duel = activeDuel;
       const initiator = players.find((p) => p.id === duel.initiatorId);
@@ -948,11 +1271,10 @@ export default function App() {
         if (carrier) finalBall = { pos: carrier.pos, carrierId: carrier.id };
       }
 
-      const dynamicPlayers = applyDynamicOffBallRuns(
-        nextPlayers,
+      const dynamicPlayers = updateSquadStamina(
+        applyDynamicOffBallRuns(nextPlayers, initiator.id, finalBall, pitchType, mentality),
         initiator.id,
-        finalBall,
-        pitchType,
+        3,
         mentality
       );
       setPlayers(dynamicPlayers);
@@ -992,6 +1314,8 @@ export default function App() {
       advanceTurnOrEndMatch(scoreBlue, scoreRed, initiator.team, turnCount, nextStats);
     },
     [
+      gameMode,
+      isSpectating,
       activeDuel,
       players,
       ball,
@@ -1010,20 +1334,260 @@ export default function App() {
     ]
   );
 
+  // Real-time Server WebSocket Match & Spectator State Sync
   useEffect(() => {
+    const unsub = mpClient.subscribeMatchEvents((ev) => {
+      if (ev.type === "mp:error") {
+        if (ev.message) triggerBanner(ev.message, "red");
+        return;
+      }
+
+      if (!ev.match) return;
+      const snap = ev.match;
+
+      if (ev.type === "match:started") {
+        clearTimers();
+        matchRewardedRef.current = false;
+        if (humanAiLiveIdRef.current) {
+          mpClient.unpublishLiveMatch(humanAiLiveIdRef.current);
+          humanAiLiveIdRef.current = null;
+        }
+        const mySide: Team = ev.yourTeam ?? "blue";
+        setOpenWindows([]);
+        setMinimizedWindows([]);
+        setIsSpectating(false);
+        setLocalAiDerby(false);
+        setSpectateMatchId(null);
+        setGameMode("online");
+        setLocalTeam(mySide);
+        setOnlineMatchId(snap.id);
+        setServerMatch(snap);
+        setPitchType(snap.pitchType);
+        setBlitzPace(snap.pace);
+        setBlitzModePref(snap.blitzModePref);
+        setDifficulty(snap.difficulty);
+        setPlayers(snap.players);
+        setBall(snap.ball);
+        setScoreBlue(snap.scoreBlue);
+        setScoreRed(snap.scoreRed);
+        setTurnCount(snap.turnCount);
+        setCurrentTurn(snap.currentTurn);
+        setLastMoveTrace(snap.lastMoveTrace);
+        setGoalBanner(snap.goalBanner);
+        setWinner(snap.winner);
+        setActiveDuel(snap.activeDuelState?.duel ?? null);
+        setCommentaryLog(snap.commentary);
+        setMatchStats(emptyMatchStats());
+        setLastMatchReward(null);
+        setSelectedPlayerId(null);
+        setMomentum(0);
+        setComboStreak(0);
+        setSuperDriveReady(false);
+        setPhase("PLAYING");
+        soundFX.playWhistle();
+        triggerBanner(
+          `⚔️ Онлайн-матч начался! Вы играете за ${mySide === "blue" ? "Синих" : "Красных"}`,
+          mySide
+        );
+        return;
+      }
+
+      if (ev.type === "spectate:joined") {
+        clearTimers();
+        setOpenWindows([]);
+        setMinimizedWindows([]);
+        setIsSpectating(true);
+        setLocalAiDerby(false);
+        setOnlineMatchId(null);
+        setSpectateMatchId(snap.id);
+        setServerMatch(snap);
+        setPitchType(snap.pitchType);
+        setBlitzPace(snap.pace);
+        setBlitzModePref(snap.blitzModePref);
+        setDifficulty(snap.difficulty);
+        setPlayers(snap.players);
+        setBall(snap.ball);
+        setScoreBlue(snap.scoreBlue);
+        setScoreRed(snap.scoreRed);
+        setTurnCount(snap.turnCount);
+        setCurrentTurn(snap.currentTurn);
+        setLastMoveTrace(snap.lastMoveTrace);
+        setGoalBanner(snap.goalBanner);
+        setWinner(snap.winner);
+        setActiveDuel(snap.activeDuelState?.duel ?? null);
+        setCommentaryLog(snap.commentary);
+        setSelectedPlayerId(null);
+        setPhase(
+          snap.status === "blitz" && snap.activeDuelState
+            ? "BLITZ_DUEL"
+            : snap.status === "goal" && snap.goalBanner
+            ? "GOAL_CELEBRATION"
+            : snap.status === "finished"
+            ? "GAME_OVER"
+            : "PLAYING"
+        );
+        triggerBanner(`📺 BLITZ TV LIVE: ${snap.roomName}`, "gold");
+        return;
+      }
+
+      if (ev.type === "match:state") {
+        if (snap.id !== onlineMatchId && snap.id !== spectateMatchId) return;
+        setServerMatch(snap);
+        setPlayers(snap.players);
+        setBall(snap.ball);
+        setScoreBlue(snap.scoreBlue);
+        setScoreRed(snap.scoreRed);
+        setTurnCount(snap.turnCount);
+        setCurrentTurn(snap.currentTurn);
+        setLastMoveTrace(snap.lastMoveTrace);
+        setGoalBanner(snap.goalBanner);
+        setWinner(snap.winner);
+        setActiveDuel(snap.activeDuelState?.duel ?? null);
+        setCommentaryLog(snap.commentary);
+
+        if (snap.ballFlight && snap.ballFlight.nonce !== lastBallFlightNonceRef.current) {
+          lastBallFlightNonceRef.current = snap.ballFlight.nonce;
+          setBallFlight(snap.ballFlight);
+          if (snap.ballFlight.isShot) soundFX.playGoal();
+          else soundFX.playPass();
+        }
+        if (snap.callout && snap.callout.id !== lastCalloutIdRef.current) {
+          lastCalloutIdRef.current = snap.callout.id;
+          setFloatingCallout(snap.callout);
+        }
+
+        const nextPhase: GamePhase =
+          snap.status === "blitz" && snap.activeDuelState
+            ? "BLITZ_DUEL"
+            : snap.status === "goal" && snap.goalBanner
+            ? "GOAL_CELEBRATION"
+            : snap.status === "finished"
+            ? "GAME_OVER"
+            : "PLAYING";
+        setPhase(nextPhase);
+
+        if (snap.status === "finished" && gameMode === "online" && !isSpectating && !matchRewardedRef.current) {
+          soundFX.playWhistle();
+          const won = snap.telemetry.blitzBlueWon;
+          const myBlitzWon = localTeam === "blue" ? won : snap.telemetry.blitzRedWon;
+          finalizeMatchRewards(
+            snap.scoreBlue,
+            snap.scoreRed,
+            {
+              ...emptyMatchStats(),
+              passes: localTeam === "blue" ? snap.telemetry.passesBlue : snap.telemetry.passesRed,
+              shots: localTeam === "blue" ? snap.telemetry.shotsBlue : snap.telemetry.shotsRed,
+              blitzWon: myBlitzWon,
+            },
+            localTeam
+          );
+        }
+      }
+    });
+    return () => unsub();
+  }, [onlineMatchId, spectateMatchId, gameMode, isSpectating, localTeam, finalizeMatchRewards, triggerBanner]);
+
+  // Broadcast live Human-vs-AI match telemetry so spectators can watch from the Lobby
+  useEffect(() => {
+    if (gameMode !== "ai" || isSpectating || phase === "TITLE_MENU") return;
+    if (!humanAiLiveIdRef.current) {
+      humanAiLiveIdRef.current = `live-${mpClient.getClientId()}-${Date.now().toString(36)}`;
+    }
+    const telemetry: MatchTelemetryStats = {
+      blueTurns: Math.ceil(turnCount / 2),
+      redTurns: Math.floor(turnCount / 2),
+      passesBlue: matchStats.passes,
+      passesRed: Math.max(0, Math.floor(turnCount / 3)),
+      shotsBlue: matchStats.shots,
+      shotsRed: scoreRed,
+      blitzBlueWon: matchStats.blitzWon,
+      blitzRedWon: Math.max(0, matchStats.blitzPlayed - matchStats.blitzWon),
+    };
+    const status: ServerMatchSnapshot["status"] =
+      phase === "BLITZ_DUEL"
+        ? "blitz"
+        : phase === "GOAL_CELEBRATION"
+        ? "goal"
+        : phase === "GAME_OVER"
+        ? "finished"
+        : "playing";
+
+    mpClient.publishLiveMatch({
+      id: humanAiLiveIdRef.current,
+      kind: "human_ai",
+      roomName: `${userProfile.clubName} vs ${aiEngine === "groq" ? "Groq ИИ" : "Тактик-ИИ"}`,
+      hostClientId: mpClient.getClientId(),
+      guestClientId: null,
+      hostName: userProfile.clubName,
+      guestName: aiEngine === "groq" ? "Groq ИИ-Агент" : "Тактик-ИИ 95",
+      pitchType,
+      pace: blitzPace,
+      blitzModePref,
+      difficulty,
+      players,
+      ball,
+      currentTurn,
+      turnCount,
+      scoreBlue,
+      scoreRed,
+      status,
+      winner,
+      activeDuelState: null,
+      lastMoveTrace,
+      ballFlight,
+      goalBanner,
+      callout: floatingCallout,
+      commentary: commentaryLog,
+      telemetry,
+      viewers: 0,
+      updatedAt: Date.now(),
+    });
+  }, [
+    gameMode,
+    isSpectating,
+    phase,
+    userProfile.clubName,
+    aiEngine,
+    pitchType,
+    blitzPace,
+    blitzModePref,
+    difficulty,
+    players,
+    ball,
+    currentTurn,
+    turnCount,
+    scoreBlue,
+    scoreRed,
+    winner,
+    lastMoveTrace,
+    ballFlight,
+    goalBanner,
+    floatingCallout,
+    commentaryLog,
+    matchStats,
+  ]);
+
+  // AI opponent turn + Local AI-vs-AI Derby simulation
+  useEffect(() => {
+    const isAiTurn = gameMode === "ai" && currentTurn === "red" && !isSpectating;
+    const isLocalDerbyTurn =
+      isSpectating && localAiDerby && !serverMatch && (currentTurn === "blue" || currentTurn === "red");
+
     if (
       phase !== "PLAYING" ||
-      gameMode !== "ai" ||
-      currentTurn !== "red" ||
-      squadModalOpen ||
-      coachModalOpen
+      (!isAiTurn && !isLocalDerbyTurn) ||
+      hasVisibleModalWindow
     ) {
       return;
     }
 
-    aiTimerRef.current = window.setTimeout(() => {
-      const action = computeBestTacticalMove(
-        "red",
+    const controller = new AbortController();
+    const aiDelay = aiPace === "fast" ? 160 : 380;
+
+    aiTimerRef.current = window.setTimeout(async () => {
+      const activeTeam = currentTurn;
+      let action = computeBestTacticalMove(
+        activeTeam,
         players,
         ball,
         difficulty,
@@ -1031,8 +1595,51 @@ export default function App() {
         blitzModePref,
         progression
       );
+
+      if (isAiTurn && aiEngine === "groq") {
+        try {
+          const resp = await fetch("/api/ai-agent/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              team: activeTeam,
+              players,
+              ball,
+              difficulty,
+              pitchType,
+              blitzModePref,
+              scoreBlue,
+              scoreRed,
+              turnCount,
+            }),
+          });
+          if (resp.ok) {
+            const data = (await resp.json()) as {
+              hint?: typeof action;
+              source?: "groq" | "local";
+              tacticBadge?: string;
+            };
+            if (data.hint) {
+              action = data.hint;
+            }
+            if (data.tacticBadge) {
+              setAiAgentBadge(
+                data.source === "groq" ? `GROQ · ${data.tacticBadge}` : data.tacticBadge
+              );
+            }
+          }
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+      } else {
+        setAiAgentBadge(null);
+      }
+
+      if (controller.signal.aborted) return;
+
       if (!action) {
-        advanceTurnOrEndMatch(scoreBlue, scoreRed, "red", turnCount, matchStats);
+        advanceTurnOrEndMatch(scoreBlue, scoreRed, activeTeam, turnCount, matchStats);
         return;
       }
       const actor = players.find((p) => p.id === action.playerId);
@@ -1045,9 +1652,10 @@ export default function App() {
       } else if (action.actionType === "move" && action.targetPos) {
         executeMove(actor, action.targetPos);
       }
-    }, 650);
+    }, aiDelay);
 
     return () => {
+      controller.abort();
       if (aiTimerRef.current !== null) {
         window.clearTimeout(aiTimerRef.current);
         aiTimerRef.current = null;
@@ -1056,9 +1664,13 @@ export default function App() {
   }, [
     phase,
     gameMode,
+    isSpectating,
+    localAiDerby,
+    serverMatch,
+    aiEngine,
     currentTurn,
-    squadModalOpen,
-    coachModalOpen,
+    aiPace,
+    hasVisibleModalWindow,
     players,
     ball,
     difficulty,
@@ -1081,11 +1693,29 @@ export default function App() {
       diff: AIDifficulty,
       pace: BlitzPace,
       pitch: PitchType,
-      blitzPref: BlitzModePreference
+      blitzPref: BlitzModePreference,
+      spectate = false,
+      engine: AIOpponentEngine = aiEngine,
+      localDerby = false
     ) => {
       clearTimers();
+      if (humanAiLiveIdRef.current) {
+        mpClient.unpublishLiveMatch(humanAiLiveIdRef.current);
+        humanAiLiveIdRef.current = null;
+      }
+      if (spectateMatchId) {
+        mpClient.leaveSpectate(spectateMatchId);
+      }
+      setOnlineMatchId(null);
+      setSpectateMatchId(null);
+      setServerMatch(null);
+      setLocalTeam("blue");
+      setAiAgentBadge(null);
+      setAiEngine(engine);
+      setLocalAiDerby(localDerby);
       matchRewardedRef.current = false;
       const reset = createInitialFormation();
+      setIsSpectating(spectate);
       setGameMode(mode);
       setDifficulty(diff);
       setBlitzPace(pace);
@@ -1109,6 +1739,8 @@ export default function App() {
       setSuperDriveReady(false);
       setBroadcastBanner(null);
       setCommentaryLog([]);
+      setOpenWindows([]);
+      setMinimizedWindows([]);
       setPhase("PLAYING");
       soundFX.playWhistle();
 
@@ -1121,7 +1753,7 @@ export default function App() {
         turn: 1,
       });
     },
-    [pushCommentary]
+    [aiEngine, spectateMatchId, pushCommentary]
   );
 
   const handleToggleSound = () => {
@@ -1176,7 +1808,14 @@ export default function App() {
     if (openShot) executeShot(selectedPlayer, openShot.goalRow);
   };
 
-  const handleAutoMove = () => {
+  const handleCyclePlayer = useCallback(() => {
+    if (!isHumanTurn || quickSwitchPlayers.length === 0) return;
+    const idx = quickSwitchPlayers.findIndex((p) => p.id === selectedPlayerId);
+    const nextIdx = idx === -1 ? 0 : (idx + 1) % quickSwitchPlayers.length;
+    setSelectedPlayerId(quickSwitchPlayers[nextIdx].id);
+  }, [isHumanTurn, quickSwitchPlayers, selectedPlayerId]);
+
+  const handleAutoMove = useCallback(() => {
     if (!isHumanTurn) return;
     const best =
       coachHint ??
@@ -1199,7 +1838,60 @@ export default function App() {
     } else if (best.actionType === "move" && best.targetPos) {
       executeMove(actor, best.targetPos);
     }
-  };
+  }, [
+    isHumanTurn,
+    coachHint,
+    currentTurn,
+    players,
+    ball,
+    pitchType,
+    blitzModePref,
+    progression,
+    executeShot,
+    executePass,
+    executeMove,
+  ]);
+
+  // Keyboard shortcuts for desktop convenience (Tab = switch, Space = best move, Enter = shoot/pass, Esc = deselect)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isHumanTurn) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        handleCyclePlayer();
+      } else if (e.code === "Space") {
+        e.preventDefault();
+        handleAutoMove();
+      } else if (e.key === "Enter") {
+        if (validShots.length > 0 && selectedPlayer) {
+          e.preventDefault();
+          const openShot = validShots.find((s) => !s.isContested) ?? validShots[0];
+          if (openShot) executeShot(selectedPlayer, openShot.goalRow);
+        } else if (validPasses.length > 0 && selectedPlayer) {
+          e.preventDefault();
+          const bestPass = [...validPasses].sort((a, b) => b.pos.col - a.pos.col)[0];
+          if (bestPass) executePass(selectedPlayer, bestPass.targetPlayerId);
+        }
+      } else if (e.key === "Escape") {
+        setSelectedPlayerId(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    isHumanTurn,
+    handleCyclePlayer,
+    handleAutoMove,
+    validShots,
+    validPasses,
+    selectedPlayer,
+    executeShot,
+    executePass,
+  ]);
 
   const handleUpgradeStat = (role: PlayerRole, stat: keyof RoleProgression["stats"]) => {
     setProgression((prev) => upgradeRoleStat(prev, role, stat));
@@ -1214,7 +1906,7 @@ export default function App() {
   };
 
   return (
-    <main className="relative w-screen h-dvh overflow-hidden bg-[#0B1014]">
+    <main className="relative w-screen h-dvh overflow-hidden win95-desktop">
       <PixiPitchCanvas
         players={players}
         ball={ball}
@@ -1233,6 +1925,8 @@ export default function App() {
         floatingCallout={floatingCallout}
         superDriveReady={superDriveReady}
         goalCelebrationTeam={phase === "GOAL_CELEBRATION" && goalBanner ? goalBanner.team : null}
+        cameraPreset={cameraPreset}
+        onChangeCameraPreset={setCameraPreset}
         onSelectPlayer={handleSelectPlayer}
         onCellClick={handleCellClick}
         onPassToPlayer={handlePassToPlayer}
@@ -1247,7 +1941,13 @@ export default function App() {
         currentTurn={currentTurn}
         gameMode={gameMode}
         difficulty={difficulty}
+        aiEngine={aiEngine}
+        aiAgentBadge={aiAgentBadge}
+        localTeam={localTeam}
+        serverMatch={serverMatch}
+        liveMatches={lobbyState.liveMatches}
         blitzPace={blitzPace}
+        aiPace={aiPace}
         pitchType={pitchType}
         blitzModePref={blitzModePref}
         mentality={mentality}
@@ -1258,6 +1958,10 @@ export default function App() {
         canQuickPass={validPasses.length > 0}
         canQuickShot={validShots.length > 0}
         canAutoMove={isHumanTurn}
+        isHumanTurn={isHumanTurn}
+        isSpectating={isSpectating}
+        quickSwitchPlayers={quickSwitchPlayers}
+        ballCarrierId={ball.carrierId}
         skillPoints={progression.skillPoints}
         lastMatchReward={lastMatchReward}
         soundEnabled={soundEnabled}
@@ -1270,24 +1974,65 @@ export default function App() {
         isCommentaryLoading={isCommentaryLoading}
         goalBanner={goalBanner}
         winner={winner}
-        onStartMatch={startNewMatch}
+        openWindows={openWindows}
+        minimizedWindows={minimizedWindows}
+        activeWindowId={activeWindowId}
+        getWindowZ={getWindowZ}
+        onOpenWindow={openWindow}
+        onFocusWindow={focusWindow}
+        onMinimizeWindow={minimizeWindow}
+        onCloseWindow={closeWindow}
+        onToggleTaskbarWindow={toggleTaskbarWindow}
+        onStartMatch={(mode, diff, pace, pitch, blitzPref, engine) =>
+          startNewMatch(mode, diff, pace, pitch, blitzPref, false, engine, false)
+        }
         onResetMatch={() =>
-          startNewMatch(gameMode, difficulty, blitzPace, pitchType, blitzModePref)
+          startNewMatch(
+            gameMode === "online" ? "ai" : gameMode,
+            difficulty,
+            blitzPace,
+            pitchType,
+            blitzModePref,
+            false,
+            aiEngine,
+            false
+          )
         }
         onOpenSetup={() => {
           clearTimers();
+          if (humanAiLiveIdRef.current) {
+            mpClient.unpublishLiveMatch(humanAiLiveIdRef.current);
+            humanAiLiveIdRef.current = null;
+          }
+          if (spectateMatchId) {
+            mpClient.leaveSpectate(spectateMatchId);
+          }
+          setOnlineMatchId(null);
+          setSpectateMatchId(null);
+          setServerMatch(null);
+          setLocalAiDerby(false);
           setActiveDuel(null);
+          setIsSpectating(false);
           setPhase("TITLE_MENU");
+          openWindow("setup");
         }}
-        onOpenSquad={() => setSquadModalOpen(true)}
-        onOpenCoach={() => setCoachModalOpen(true)}
         onToggleSound={handleToggleSound}
         onToggleTts={handleToggleTts}
+        onToggleAIPace={() => setAiPace((p) => (p === "normal" ? "fast" : "normal"))}
         onToggleCoachHint={() => setShowCoachHint((v) => !v)}
         onChangeMentality={setMentality}
+        onSelectQuickPlayer={(id) => setSelectedPlayerId(id)}
+        onCyclePlayer={handleCyclePlayer}
         onQuickPass={handleQuickPass}
         onQuickShot={handleQuickShot}
         onAutoMove={handleAutoMove}
+        onExitSpectate={handleExitSpectate}
+        onSwitchSpectateMatch={handleSwitchSpectateMatch}
+        onSendSpectateReaction={handleSendSpectateReaction}
+        onResignOnlineMatch={() => {
+          if (onlineMatchId) mpClient.resignMatch(onlineMatchId);
+        }}
+        userProfile={userProfile}
       />
 
       {phase === "BLITZ_DUEL" && activeDuel && (
@@ -1297,21 +2042,97 @@ export default function App() {
           gameMode={gameMode}
           difficulty={difficulty}
           blitzPace={blitzPace}
+          isSpectator={isSpectating}
+          localTeam={localTeam}
+          serverDuelState={serverMatch?.activeDuelState ?? null}
+          onServerMark={(cellIdx) => {
+            if (onlineMatchId) {
+              mpClient.sendBlitzMark(onlineMatchId, cellIdx);
+            }
+          }}
           onResolve={handleResolveDuel}
         />
       )}
 
-      {squadModalOpen && (
-        <SquadModal
-          progression={progression}
-          onUpgradeStat={handleUpgradeStat}
-          onUnlockAbility={handleUnlockAbility}
-          onUpdateAppearance={handleUpdateAppearance}
-          onClose={() => setSquadModalOpen(false)}
+      {openWindows.includes("lobby") && (
+        <MultiplayerLobbyModal
+          clubName={userProfile.clubName}
+          managerName={userProfile.managerName}
+          zIndex={getWindowZ("lobby")}
+          isActive={activeWindowId === "lobby"}
+          isMinimized={minimizedWindows.includes("lobby")}
+          cascadeIndex={1}
+          topBoundary={phase === "TITLE_MENU" ? 4 : 42}
+          onFocus={() => focusWindow("lobby")}
+          onMinimize={() => minimizeWindow("lobby")}
+          onStartVsAiMatch={(pitch, pace) => {
+            closeWindow("lobby");
+            startNewMatch("ai", difficulty, pace, pitch, blitzModePref, false, aiEngine, false);
+          }}
+          onSpectateMatch={handleSpectateLiveMatch}
+          onStartLocalAiDerby={(pitch, pace) => {
+            closeWindow("lobby");
+            startNewMatch("ai", "pro", pace, pitch, "dynamic", true, "classic", true);
+            triggerBanner("🤖 Локальное ИИ-Дерби запущено!", "gold");
+          }}
+          onOpenChallenge={() => openWindow("challenge")}
+          onClose={() => closeWindow("lobby")}
         />
       )}
 
-      {coachModalOpen && (
+      {openWindows.includes("profile") && (
+        <ProfileModal
+          profile={userProfile}
+          progression={progression}
+          zIndex={getWindowZ("profile")}
+          isActive={activeWindowId === "profile"}
+          isMinimized={minimizedWindows.includes("profile")}
+          cascadeIndex={2}
+          topBoundary={phase === "TITLE_MENU" ? 4 : 42}
+          onFocus={() => focusWindow("profile")}
+          onMinimize={() => minimizeWindow("profile")}
+          onSaveProfile={handleSaveProfile}
+          onOpenSquad={() => openWindow("squad")}
+          onOpenChallenge={() => openWindow("challenge")}
+          onClose={() => closeWindow("profile")}
+        />
+      )}
+
+      {openWindows.includes("challenge") && (
+        <ChallengeModal
+          clubName={userProfile.clubName}
+          pitchType={pitchType}
+          blitzPace={blitzPace}
+          zIndex={getWindowZ("challenge")}
+          isActive={activeWindowId === "challenge"}
+          isMinimized={minimizedWindows.includes("challenge")}
+          cascadeIndex={3}
+          topBoundary={phase === "TITLE_MENU" ? 4 : 42}
+          onFocus={() => focusWindow("challenge")}
+          onMinimize={() => minimizeWindow("challenge")}
+          onAcceptChallenge={handleAcceptChallenge}
+          onClose={() => closeWindow("challenge")}
+        />
+      )}
+
+      {openWindows.includes("squad") && (
+        <SquadModal
+          progression={progression}
+          zIndex={getWindowZ("squad")}
+          isActive={activeWindowId === "squad"}
+          isMinimized={minimizedWindows.includes("squad")}
+          cascadeIndex={2}
+          topBoundary={phase === "TITLE_MENU" ? 4 : 42}
+          onFocus={() => focusWindow("squad")}
+          onMinimize={() => minimizeWindow("squad")}
+          onUpgradeStat={handleUpgradeStat}
+          onUnlockAbility={handleUnlockAbility}
+          onUpdateAppearance={handleUpdateAppearance}
+          onClose={() => closeWindow("squad")}
+        />
+      )}
+
+      {openWindows.includes("coach") && (
         <CoachModal
           pitchType={pitchType}
           difficulty={difficulty}
@@ -1320,8 +2141,15 @@ export default function App() {
           turnCount={turnCount}
           stats={matchStats}
           progression={progression}
-          onOpenSquad={() => setSquadModalOpen(true)}
-          onClose={() => setCoachModalOpen(false)}
+          zIndex={getWindowZ("coach")}
+          isActive={activeWindowId === "coach"}
+          isMinimized={minimizedWindows.includes("coach")}
+          cascadeIndex={3}
+          topBoundary={phase === "TITLE_MENU" ? 4 : 42}
+          onFocus={() => focusWindow("coach")}
+          onMinimize={() => minimizeWindow("coach")}
+          onOpenSquad={() => openWindow("squad")}
+          onClose={() => closeWindow("coach")}
         />
       )}
     </main>

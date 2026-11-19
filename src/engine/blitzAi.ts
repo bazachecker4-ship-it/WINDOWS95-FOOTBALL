@@ -1,4 +1,4 @@
-import { AIDifficulty } from "../types/game";
+import type { AIDifficulty } from "../types/game.ts";
 
 export type BlitzCell = "X" | "O" | "BLOCKED" | null;
 
@@ -99,6 +99,34 @@ function findWinningMove(
   return null;
 }
 
+function countImmediateThreats(
+  board: BlitzCell[],
+  mark: "X" | "O",
+  oppMark: "X" | "O",
+  winLength: number,
+  lines: number[][]
+): { openWinThreats: number; openSetupThreats: number } {
+  let openWinThreats = 0;
+  let openSetupThreats = 0;
+  for (const line of lines) {
+    let mCount = 0;
+    let oCount = 0;
+    let blocked = false;
+    for (const c of line) {
+      if (board[c] === "BLOCKED") {
+        blocked = true;
+        break;
+      }
+      if (board[c] === mark) mCount++;
+      else if (board[c] === oppMark) oCount++;
+    }
+    if (blocked || oCount > 0) continue;
+    if (mCount === winLength - 1) openWinThreats++;
+    else if (mCount === winLength - 2 && winLength >= 4) openSetupThreats++;
+  }
+  return { openWinThreats, openSetupThreats };
+}
+
 function evaluateBoardHeuristic(
   board: BlitzCell[],
   aiMark: "X" | "O",
@@ -120,8 +148,8 @@ function evaluateBoardHeuristic(
       else if (board[idx] === humanMark) humanCount++;
     }
     if (blocked || (aiCount > 0 && humanCount > 0)) continue;
-    if (aiCount > 0) score += Math.pow(4, aiCount);
-    else if (humanCount > 0) score -= Math.pow(4.3, humanCount);
+    if (aiCount > 0) score += Math.pow(4.2, aiCount);
+    else if (humanCount > 0) score -= Math.pow(4.6, humanCount);
   }
 
   const center = (size - 1) / 2;
@@ -130,7 +158,7 @@ function evaluateBoardHeuristic(
     const r = Math.floor(idx / size);
     const c = idx % size;
     const dist = Math.abs(r - center) + Math.abs(c - center);
-    const bonus = Math.max(0, size - dist) * 0.5;
+    const bonus = Math.max(0, size - dist) * 0.65;
     score += board[idx] === aiMark ? bonus : -bonus;
   }
   return score;
@@ -172,6 +200,78 @@ function minimax3x3(
   }
 }
 
+function alphaBetaDecay3x3(
+  board: BlitzCell[],
+  aiQueue: number[],
+  humanQueue: number[],
+  depth: number,
+  maxDepth: number,
+  alpha: number,
+  beta: number,
+  isMax: boolean,
+  aiMark: "X" | "O",
+  humanMark: "X" | "O",
+  lines: number[][],
+  maxMarks: number
+): number {
+  const res = checkBlitzWinner(board, 3, 3, lines);
+  if (res.winner === aiMark) return 200 - depth * 10;
+  if (res.winner === humanMark) return depth * 10 - 200;
+  if (depth >= maxDepth) {
+    return evaluateBoardHeuristic(board, aiMark, humanMark, 3, lines);
+  }
+
+  if (isMax) {
+    let best = -Infinity;
+    for (let i = 0; i < 9; i++) {
+      if (board[i] !== null) continue;
+      const { nextBoard, nextQueue } = simulateDecayMove(board, aiQueue, i, aiMark, maxMarks);
+      const val = alphaBetaDecay3x3(
+        nextBoard,
+        nextQueue,
+        humanQueue,
+        depth + 1,
+        maxDepth,
+        alpha,
+        beta,
+        false,
+        aiMark,
+        humanMark,
+        lines,
+        maxMarks
+      );
+      best = Math.max(best, val);
+      alpha = Math.max(alpha, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  } else {
+    let best = Infinity;
+    for (let i = 0; i < 9; i++) {
+      if (board[i] !== null) continue;
+      const { nextBoard, nextQueue } = simulateDecayMove(board, humanQueue, i, humanMark, maxMarks);
+      const val = alphaBetaDecay3x3(
+        nextBoard,
+        aiQueue,
+        nextQueue,
+        depth + 1,
+        maxDepth,
+        alpha,
+        beta,
+        true,
+        aiMark,
+        humanMark,
+        lines,
+        maxMarks
+      );
+      best = Math.min(best, val);
+      beta = Math.min(beta, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  }
+}
+
 export function chooseBlitzAIMove(
   board: BlitzCell[],
   size: 3 | 4 | 5,
@@ -192,17 +292,17 @@ export function chooseBlitzAIMove(
 
   // 1. Immediate win
   const winMove = findWinningMove(board, aiMark, lines, aiQueue, maxMarksPerPlayer);
-  if (winMove !== null && (difficulty !== "rookie" || Math.random() < 0.7)) {
+  if (winMove !== null && (difficulty !== "rookie" || Math.random() < 0.72)) {
     return winMove;
   }
 
   // 2. Immediate block
   const blockMove = findWinningMove(board, humanMark, lines, humanQueue, maxMarksPerPlayer);
-  if (blockMove !== null && (difficulty !== "rookie" || Math.random() < 0.55)) {
+  if (blockMove !== null && (difficulty !== "rookie" || Math.random() < 0.58)) {
     return blockMove;
   }
 
-  if (difficulty === "rookie" && Math.random() < 0.55) {
+  if (difficulty === "rookie" && Math.random() < 0.5) {
     return emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
   }
 
@@ -211,7 +311,7 @@ export function chooseBlitzAIMove(
     size === 3 &&
     maxMarksPerPlayer === null &&
     !board.includes("BLOCKED") &&
-    (difficulty === "pro" || (difficulty === "tactical" && Math.random() < 0.75))
+    (difficulty === "pro" || (difficulty === "tactical" && Math.random() < 0.78))
   ) {
     const copy = [...board];
     let bestScore = -Infinity;
@@ -230,34 +330,57 @@ export function chooseBlitzAIMove(
     return bestMoves[Math.floor(Math.random() * bestMoves.length)];
   }
 
-  // 4. Heuristic + 2-ply lookahead for decay / blocked / 4x4 / 5x5
+  // 4. Deep alpha-beta search on 3x3 Decay mode
+  if (size === 3 && maxMarksPerPlayer !== null && difficulty !== "rookie") {
+    const maxDepth = difficulty === "pro" ? 5 : 3;
+    let bestScore = -Infinity;
+    let bestMoves: number[] = [];
+    for (const idx of emptyIndices) {
+      const { nextBoard, nextQueue } = simulateDecayMove(
+        board,
+        aiQueue,
+        idx,
+        aiMark,
+        maxMarksPerPlayer
+      );
+      const score = alphaBetaDecay3x3(
+        nextBoard,
+        nextQueue,
+        humanQueue,
+        1,
+        maxDepth,
+        -Infinity,
+        Infinity,
+        false,
+        aiMark,
+        humanMark,
+        lines,
+        maxMarksPerPlayer
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        bestMoves = [idx];
+      } else if (Math.abs(score - bestScore) < 0.01) {
+        bestMoves.push(idx);
+      }
+    }
+    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  }
+
+  // 5. Fork awareness + 2-ply lookahead for 4x4 / 5x5 / blocked grids
   let bestScore = -Infinity;
   let bestChoices: number[] = [];
 
   for (const idx of emptyIndices) {
     const { nextBoard } = simulateDecayMove(board, aiQueue, idx, aiMark, maxMarksPerPlayer);
 
-    let threatCount = 0;
-    for (const line of lines) {
-      let aiC = 0;
-      let oppC = 0;
-      let blocked = false;
-      for (const c of line) {
-        if (nextBoard[c] === "BLOCKED") {
-          blocked = true;
-          break;
-        }
-        if (nextBoard[c] === aiMark) aiC++;
-        else if (nextBoard[c] === humanMark) oppC++;
-      }
-      if (!blocked && oppC === 0 && aiC === winLength - 1) threatCount++;
-    }
-
+    const aiThreats = countImmediateThreats(nextBoard, aiMark, humanMark, winLength, lines);
     let score = evaluateBoardHeuristic(nextBoard, aiMark, humanMark, size, lines);
-    if (threatCount >= 2) score += 240;
-    else if (threatCount === 1) score += 35;
+    if (aiThreats.openWinThreats >= 2) score += 280;
+    else if (aiThreats.openWinThreats === 1) score += 48;
+    score += aiThreats.openSetupThreats * 14;
 
-    if (difficulty === "pro") {
+    if (difficulty === "pro" || difficulty === "tactical") {
       let worstReply = Infinity;
       for (const oppIdx of emptyIndices) {
         if (oppIdx === idx || nextBoard[oppIdx] !== null) continue;
@@ -269,14 +392,19 @@ export function chooseBlitzAIMove(
           maxMarksPerPlayer
         );
         const oppWin = checkBlitzWinner(oppBoard, size, winLength, lines);
-        const replyEval =
-          oppWin.winner === humanMark
-            ? -500
-            : evaluateBoardHeuristic(oppBoard, aiMark, humanMark, size, lines);
+        let replyEval: number;
+        if (oppWin.winner === humanMark) {
+          replyEval = -600;
+        } else {
+          const oppThreats = countImmediateThreats(oppBoard, humanMark, aiMark, winLength, lines);
+          replyEval = evaluateBoardHeuristic(oppBoard, aiMark, humanMark, size, lines);
+          if (oppThreats.openWinThreats >= 2) replyEval -= 260;
+        }
         worstReply = Math.min(worstReply, replyEval);
       }
       if (worstReply < Infinity) {
-        score = score * 0.4 + worstReply * 0.6;
+        const w = difficulty === "pro" ? 0.62 : 0.4;
+        score = score * (1 - w) + worstReply * w;
       }
     }
 

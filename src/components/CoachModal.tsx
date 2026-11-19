@@ -9,7 +9,8 @@ import {
   ROLE_META,
   SquadProgressionState,
 } from "../types/game";
-import { BrainCircuit, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { BrainCircuit, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Win95Window } from "./Win95Window";
 
 interface CoachModalProps {
   pitchType: PitchType;
@@ -19,6 +20,13 @@ interface CoachModalProps {
   turnCount: number;
   stats: MatchStats;
   progression: SquadProgressionState;
+  zIndex: number;
+  isActive: boolean;
+  isMinimized?: boolean;
+  cascadeIndex?: number;
+  topBoundary?: number;
+  onFocus: () => void;
+  onMinimize?: () => void;
   onOpenSquad: () => void;
   onClose: () => void;
 }
@@ -31,6 +39,13 @@ export const CoachModal: React.FC<CoachModalProps> = ({
   turnCount,
   stats,
   progression,
+  zIndex,
+  isActive,
+  isMinimized,
+  cascadeIndex = 4,
+  topBoundary = 40,
+  onFocus,
+  onMinimize,
   onOpenSquad,
   onClose,
 }) => {
@@ -99,31 +114,35 @@ export const CoachModal: React.FC<CoachModalProps> = ({
     stats.blitzPlayed > 0 ? Math.round((stats.blitzWon / stats.blitzPlayed) * 100) : 0;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Разбор от ИИ-Тренера"
+    <Win95Window
+      title="AI_COACH.SYS — Тактический разбор"
+      icon={<BrainCircuit className="w-3.5 h-3.5 shrink-0" />}
+      ariaLabel="Разбор от ИИ-Тренера"
+      zIndex={zIndex}
+      isActive={isActive}
+      isMinimized={isMinimized}
+      cascadeIndex={cascadeIndex}
+      topBoundary={topBoundary}
+      defaultWidth={580}
+      defaultHeight={530}
+      minWidth={320}
+      minHeight={340}
+      onFocus={onFocus}
+      onMinimize={onMinimize}
+      onClose={onClose}
+      statusBarPanes={[
+        { text: `Счёт ${scoreBlue}:${scoreRed} · Ход ${turnCount}`, flex: true },
+        {
+          text:
+            analysis?.source === "groq"
+              ? "Groq AI: ONLINE"
+              : analysis?.source === "gemini"
+              ? "Gemini AI: ONLINE"
+              : "Анализ: LOCAL",
+        },
+      ]}
     >
-      <div className="w-full max-w-xl pc-window p-1">
-        <div className="pc-titlebar px-3 py-1.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <BrainCircuit className="w-4 h-4 shrink-0" />
-            <span className="font-display text-base font-bold truncate">
-              AI_COACH.SYS — Тактический разбор
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Закрыть разбор тренера"
-            className="pc-btn w-6 h-6 flex items-center justify-center cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="p-4 space-y-3">
+      <div className="p-4 space-y-3 overflow-y-auto flex-1">
           <div className="text-xs text-slate-800 font-medium">
             Покрытие: {PITCH_META[pitchType].name} · Ведущая фигура: {ROLE_META[mostUsedRole].name}
           </div>
@@ -198,10 +217,7 @@ export const CoachModal: React.FC<CoachModalProps> = ({
 
             <button
               type="button"
-              onClick={() => {
-                onClose();
-                onOpenSquad();
-              }}
+              onClick={onOpenSquad}
               className="pc-btn-primary px-4 py-1.5 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -209,7 +225,6 @@ export const CoachModal: React.FC<CoachModalProps> = ({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Win95Window>
   );
 };

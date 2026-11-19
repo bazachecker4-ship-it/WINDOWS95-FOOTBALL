@@ -3,6 +3,7 @@ import * as PIXI from "pixi.js";
 import {
   BallFlightEvent,
   BallState,
+  CameraPreset,
   FloatingCallout,
   GOAL_ROWS,
   MoveOption,
@@ -20,21 +21,73 @@ import {
 } from "../types/game";
 import { getPitchObstacles } from "../engine/footballEngine";
 import {
-  CELL_SIZE,
-  GOAL_DEPTH,
-  MARGIN_X,
-  MARGIN_Y,
   PlayerAnimationFrames,
   WORLD_H,
   WORLD_W,
+  cellCenter,
+  cellQuad,
   createBallAnimationFrames,
   createConeTexture,
   createCornerFlagFrames,
   createPitchTexture,
   createPlayerAnimationFrames,
+  gridPoint,
 } from "./pixelArtTextures";
 import { CRTFilterHandle, createCRTFilter } from "./crtFilter";
-import { Monitor, ZoomIn, ZoomOut } from "lucide-react";
+import { Camera, Compass, LocateFixed, Monitor, ZoomIn, ZoomOut } from "lucide-react";
+
+const CAMERA_PRESET_META: Record<
+  CameraPreset,
+  { label: string; shortLabel: string; title: string; zoom: number; rot: number; skewX: number; tiltY: number }
+> = {
+  tv: {
+    label: "ТВ-Эфир",
+    shortLabel: "ТВ",
+    title: "Динамическая ТВ-камера следит за мячом (клавиша V)",
+    zoom: 1.42,
+    rot: 0,
+    skewX: 0.03,
+    tiltY: 0.95,
+  },
+  wide: {
+    label: "Всё поле",
+    shortLabel: "Обзор",
+    title: "Полное поле 32×32 целиком",
+    zoom: 1.0,
+    rot: 0,
+    skewX: 0,
+    tiltY: 1.0,
+  },
+  close: {
+    label: "Крупно",
+    shortLabel: "Крупно",
+    title: "Приближение 1.95× + перетаскивание поля",
+    zoom: 1.95,
+    rot: 0,
+    skewX: 0,
+    tiltY: 0.96,
+  },
+  topdown: {
+    label: "Сверху",
+    shortLabel: "Сверху",
+    title: "Выпрямленный тактический вид сверху",
+    zoom: 1.02,
+    rot: -0.22,
+    skewX: -0.14,
+    tiltY: 1.1,
+  },
+  opposite: {
+    label: "Трибуна 180°",
+    shortLabel: "180°",
+    title: "Обратный ракурс с противоположной трибуны",
+    zoom: 1.18,
+    rot: Math.PI,
+    skewX: 0,
+    tiltY: 1.0,
+  },
+};
+
+const CAMERA_PRESET_ORDER: CameraPreset[] = ["tv", "wide", "close", "topdown", "opposite"];
 
 interface PixiPitchCanvasProps {
   players: PlayerPiece[];
@@ -54,6 +107,8 @@ interface PixiPitchCanvasProps {
   floatingCallout: FloatingCallout | null;
   superDriveReady: boolean;
   goalCelebrationTeam: Team | null;
+  cameraPreset?: CameraPreset;
+  onChangeCameraPreset?: (preset: CameraPreset) => void;
   onSelectPlayer: (playerId: string) => void;
   onCellClick: (pos: Position) => void;
   onPassToPlayer: (targetId: string) => void;
@@ -69,10 +124,10 @@ interface Particle {
 }
 
 interface AmbientMote {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
+  col: number;
+  row: number;
+  vc: number;
+  vr: number;
   phase: number;
   size: number;
 }
@@ -100,23 +155,28 @@ const PIXEL_ARROW_CURSOR =
 const PIXEL_POINTER_CURSOR =
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='24' viewBox='0 0 18 20' shape-rendering='crispEdges'%3E%3Cpath d='M6 1h2v6h2V6h2v1h2v1h2v5l-1 5H6l-3-4v-3h2v1h1V1z' fill='%23000000'/%3E%3Cpath d='M7 2v9H5v1l2 3h6l1-4V9h-1v2h-1V8h-1v3h-1V7H9v4H8V2H7z' fill='%23ffffff'/%3E%3C/svg%3E") 6 1, pointer`;
 
-function cellCenter(pos: Position): { x: number; y: number } {
-  return {
-    x: MARGIN_X + (pos.col + 0.5) * CELL_SIZE,
-    y: MARGIN_Y + (pos.row + 0.5) * CELL_SIZE,
-  };
-}
-
 export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
 
-  const [zoomed, setZoomed] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 640 : false
+  const [internalPreset, setInternalPreset] = useState<CameraPreset>(() =>
+    typeof window !== "undefined" && window.innerWidth < 640 ? "tv" : "tv"
   );
-  const zoomRef = useRef(zoomed);
-  zoomRef.current = zoomed;
+  const activePreset = props.cameraPreset ?? internalPreset;
+  const presetRef = useRef<CameraPreset>(activePreset);
+  presetRef.current = activePreset;
+
+  const [zoomOffset, setZoomOffset] = useState(0);
+  const zoomOffsetRef = useRef(0);
+  zoomOffsetRef.current = zoomOffset;
+
+  const setCameraPreset = (next: CameraPreset) => {
+    setInternalPreset(next);
+    setZoomOffset(0);
+    panOffsetRef.current = { x: 0, y: 0 };
+    propsRef.current.onChangeCameraPreset?.(next);
+  };
 
   const panOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const dragStateRef = useRef<{
@@ -132,6 +192,9 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
   const crtEnabledRef = useRef(true);
   crtEnabledRef.current = crtEnabled;
 
+  const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fitCanvasRef = useRef<() => void>(() => {});
+
   const engineRef = useRef<{
     app: PIXI.Application;
     worldContainer: PIXI.Container;
@@ -139,10 +202,16 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     pitchSprite: PIXI.Sprite;
     ambientGfx: PIXI.Graphics;
     ambientMotes: AmbientMote[];
+    flagsLayer: PIXI.Container;
     obstaclesLayer: PIXI.Container;
     hintsLayer: PIXI.Graphics;
     hintLabelsLayer: PIXI.Container;
     hoverCursor: PIXI.Graphics;
+    hoverPreviewLayer: PIXI.Graphics;
+    hoverPreviewTag: PIXI.Container;
+    hoverPreviewText: PIXI.Text;
+    hoverPreviewBg: PIXI.Graphics;
+    selectedArrow: PIXI.Graphics;
     playersLayer: PIXI.Container;
     ghostsLayer: PIXI.Container;
     ballShadow: PIXI.Graphics;
@@ -160,6 +229,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         sprite: PIXI.Sprite;
         frames: PlayerAnimationFrames;
         ring: PIXI.Graphics;
+        staminaBar: PIXI.Graphics;
         badge: PIXI.Text;
         passTag: PIXI.Container;
         tx: number;
@@ -167,6 +237,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         facing: 1 | -1;
         animClock: number;
         ghostCooldown: number;
+        kickBoost: number;
       }
     >;
     ballTarget: { x: number; y: number };
@@ -182,6 +253,9 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     camZoom: number;
     camX: number;
     camY: number;
+    camRot: number;
+    camSkewX: number;
+    camTiltY: number;
   } | null>(null);
 
   const spawnBurst = (x: number, y: number, color: number, count = 10) => {
@@ -199,7 +273,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       eng.particles.push({
         gfx: g,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        vy: Math.sin(angle) * speed - 0.5,
         life: 0,
         maxLife: 20 + Math.random() * 16,
       });
@@ -211,14 +285,14 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     if (!eng) return;
     const center = cellCenter(pos);
     const container = new PIXI.Container();
-    container.x = Math.max(MARGIN_X + 52, Math.min(WORLD_W - MARGIN_X - 52, center.x));
-    container.y = Math.max(MARGIN_Y + 24, center.y - 24);
+    container.x = Math.max(90, Math.min(WORLD_W - 90, center.x));
+    container.y = Math.max(46, center.y - 36);
 
     const lbl = new PIXI.Text({
       text,
       style: {
         fontFamily: "Pixelify Sans, monospace",
-        fontSize: 15,
+        fontSize: 16,
         fontWeight: "700",
         fill: color,
         stroke: { color: 0x05080f, width: 4 },
@@ -227,7 +301,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     lbl.anchor.set(0.5);
     container.addChild(lbl);
     eng.calloutsLayer.addChild(container);
-    eng.callouts.push({ container, life: 0, maxLife: 58 });
+    eng.callouts.push({ container, life: 0, maxLife: 62 });
   };
 
   const syncScene = () => {
@@ -235,7 +309,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     if (!eng) return;
     const p = propsRef.current;
 
-    // 1. Rebuild pitch background & obstacles if pitchType changed
+    // 1. Rebuild isometric pitch background & 3D cones if pitchType changed
     if (eng.lastPitchType !== p.pitchType) {
       eng.lastPitchType = p.pitchType;
       eng.pitchSprite.texture = createPitchTexture(p.pitchType);
@@ -243,12 +317,12 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       eng.obstaclesLayer.removeChildren();
       for (const obs of getPitchObstacles(p.pitchType)) {
         const sp = new PIXI.Sprite(eng.coneTex);
-        sp.anchor.set(0.5);
-        sp.width = 26;
-        sp.height = 26;
+        sp.anchor.set(0.5, 0.78);
+        sp.width = 28;
+        sp.height = 28;
         const c = cellCenter(obs);
         sp.x = c.x;
-        sp.y = c.y;
+        sp.y = c.y + 4;
         eng.obstaclesLayer.addChild(sp);
       }
     }
@@ -263,7 +337,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     const validPassMap = new Map(p.validPasses.map((o) => [o.targetPlayerId, o]));
     const moveMap = new Map(p.validMoves.map((m) => [`${m.pos.col},${m.pos.row}`, m]));
 
-    // 3. Update all 22 Footballers (11v11)
+    // 3. Update all 22 Footballers (2.5D Isometric Standing Characters)
     for (const player of p.players) {
       const center = cellCenter(player.pos);
       let vis = eng.playerVisuals.get(player.id);
@@ -276,6 +350,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         container.cursor = "pointer";
 
         const ring = new PIXI.Graphics();
+        const staminaBar = new PIXI.Graphics();
         const frames = createPlayerAnimationFrames(
           player.role,
           player.team,
@@ -283,12 +358,15 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           player.team === "blue" ? p.progression.roles[player.role].appearance : undefined
         );
         const sprite = new PIXI.Sprite(frames.idle[0]);
-        sprite.anchor.set(0.5, 0.56);
-        sprite.width = 34;
-        sprite.height = 40;
+        // Foot anchor at cell center so torso/head rise into 2.5D vertical depth
+        sprite.anchor.set(0.5, 0.84);
+        const spriteW = 36;
+        const spriteH = 44;
+        sprite.width = spriteW;
+        sprite.height = spriteH;
 
         const facing: 1 | -1 = player.team === "blue" ? 1 : -1;
-        sprite.scale.x = facing * (34 / 24);
+        sprite.scale.x = facing * (spriteW / 30);
 
         const badge = new PIXI.Text({
           text: `${ROLE_META[player.role].code}${player.number}`,
@@ -301,12 +379,12 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           },
         });
         badge.anchor.set(0.5);
-        badge.y = 19;
+        badge.y = 11;
 
         const passTag = new PIXI.Container();
         const passBg = new PIXI.Graphics();
-        passBg.rect(-15, -31, 30, 12).fill({ color: 0xfbbf24 });
-        passBg.rect(-15, -31, 30, 12).stroke({ color: 0x090d16, width: 1.5 });
+        passBg.rect(-15, -49, 30, 12).fill({ color: 0xfbbf24 });
+        passBg.rect(-15, -49, 30, 12).stroke({ color: 0x090d16, width: 1.5 });
         const passTxt = new PIXI.Text({
           text: "ПАС",
           style: {
@@ -317,11 +395,11 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           },
         });
         passTxt.anchor.set(0.5);
-        passTxt.y = -25;
+        passTxt.y = -43;
         passTag.addChild(passBg, passTxt);
         passTag.visible = false;
 
-        container.addChild(ring, sprite, badge, passTag);
+        container.addChild(ring, sprite, staminaBar, badge, passTag);
 
         container.on("pointertap", (ev) => {
           ev.stopPropagation();
@@ -353,6 +431,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           sprite,
           frames,
           ring,
+          staminaBar,
           badge,
           passTag,
           tx: center.x,
@@ -360,6 +439,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           facing,
           animClock: Math.random() * 10,
           ghostCooldown: 0,
+          kickBoost: 0,
         };
         eng.playerVisuals.set(player.id, vis);
       }
@@ -379,9 +459,10 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         if (Math.abs(dx) > 1) {
           vis.facing = dx >= 0 ? 1 : -1;
         }
+        vis.kickBoost = 1;
         const particleCol =
           p.pitchType === "ice" ? 0xbae6fd : p.pitchType === "sand" ? 0xfde68a : 0x86efac;
-        spawnBurst(vis.tx, vis.ty + 10, particleCol, 4);
+        spawnBurst(vis.tx, vis.ty + 2, particleCol, 5);
       }
 
       vis.tx = center.x;
@@ -399,25 +480,37 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       vis.container.cursor = canClick ? "pointer" : "default";
       vis.passTag.visible = isPassTarget;
 
+      // Render tactical stamina micro-bar
+      vis.staminaBar.clear();
+      const stam = player.stamina ?? 100;
+      if (player.team === "blue" && (isSelected || hasBall || stam < 75)) {
+        const barW = 22;
+        const fillW = Math.max(2, Math.round((barW * stam) / 100));
+        const barCol = stam >= 60 ? 0x4ade80 : stam >= 30 ? 0xfbbf24 : 0xef4444;
+        vis.staminaBar.rect(-barW / 2 - 1, 16, barW + 2, 4).fill({ color: 0x05080f });
+        vis.staminaBar.rect(-barW / 2, 17, fillW, 2).fill({ color: barCol });
+      }
+
+      // Isometric elliptical floor rings under player boots
       vis.ring.clear();
       if (isSelected) {
         const selColor = p.superDriveReady && player.team === "blue" ? 0xfde047 : 0x4ade80;
-        vis.ring.rect(-18, -20, 36, 38).stroke({ color: selColor, width: 2.5 });
+        vis.ring.ellipse(0, 1, 16, 8).stroke({ color: selColor, width: 2.5 });
+        vis.ring.ellipse(0, 1, 12, 6).fill({ color: selColor, alpha: 0.2 });
       } else if (isPassTarget) {
-        vis.ring
-          .rect(-18, -20, 36, 38)
-          .stroke({ color: passOpt?.isLob ? 0xc084fc : 0xfbbf24, width: 2.5 });
+        const pCol = passOpt?.isLob ? 0xc084fc : 0xfbbf24;
+        vis.ring.ellipse(0, 1, 16, 8).stroke({ color: pCol, width: 2.5 });
       } else if (isClashTarget) {
-        vis.ring.rect(-18, -20, 36, 38).stroke({ color: 0xf97316, width: 2.5 });
+        vis.ring.ellipse(0, 1, 16, 8).stroke({ color: 0xf97316, width: 2.5 });
       } else if (hasBall) {
-        vis.ring.rect(-16, -18, 32, 34).stroke({ color: 0xfef08a, width: 1.5, alpha: 0.85 });
+        vis.ring.ellipse(0, 1, 14, 7).stroke({ color: 0xfef08a, width: 1.8, alpha: 0.9 });
       }
     }
 
     // 4. Ball Target + Airborne Flight Arc
     const ballCenter = cellCenter(p.ball.pos);
     const nextBx = p.ball.carrierId ? ballCenter.x + 11 : ballCenter.x;
-    const nextBy = p.ball.carrierId ? ballCenter.y + 11 : ballCenter.y;
+    const nextBy = p.ball.carrierId ? ballCenter.y + 4 : ballCenter.y;
     if (eng.ballTarget.x !== nextBx || eng.ballTarget.y !== nextBy) {
       spawnBurst(eng.ballTarget.x, eng.ballTarget.y, 0xf8fafc, 5);
     }
@@ -434,13 +527,19 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         toX: p.ballFlight.isShot ? toPt.x : nextBx,
         toY: p.ballFlight.isShot ? toPt.y : nextBy,
         progress: 0,
-        duration: p.ballFlight.isShot ? 16 : p.ballFlight.isLob ? 22 : 14,
+        duration: p.ballFlight.isShot ? 16 : p.ballFlight.isLob ? 24 : 15,
         peakHeight: p.ballFlight.isLob
-          ? Math.min(54, 18 + dist * 0.14)
+          ? Math.min(72, 26 + dist * 0.16)
           : p.ballFlight.isShot
-          ? 24
-          : Math.min(20, 6 + dist * 0.05),
-        trailColor: p.ballFlight.isShot ? 0x4ade80 : p.ballFlight.isLob ? 0xc084fc : 0xfbbf24,
+          ? 30
+          : Math.min(24, 8 + dist * 0.06),
+        trailColor: p.ballFlight.isSuperShot
+          ? 0xfacc15
+          : p.ballFlight.isShot
+          ? 0x4ade80
+          : p.ballFlight.isLob
+          ? 0xc084fc
+          : 0xfbbf24,
       };
     }
 
@@ -450,7 +549,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       spawnCallout(p.floatingCallout.pos, p.floatingCallout.text, p.floatingCallout.color);
     }
 
-    // 6. Redraw Hints & Trajectories on 32x32 grid
+    // 6. Redraw Isometric Hints & Trajectories on 32x32 grid
     eng.hintsLayer.clear();
     eng.hintLabelsLayer.removeChildren();
 
@@ -471,13 +570,12 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
 
     if (p.isHumanTurn) {
       for (const mv of p.validMoves) {
-        const x = MARGIN_X + mv.pos.col * CELL_SIZE + 2;
-        const y = MARGIN_Y + mv.pos.row * CELL_SIZE + 2;
-        const w = CELL_SIZE - 4;
+        const quad = cellQuad(mv.pos.col, mv.pos.row, 0.08);
+        const mc = cellCenter(mv.pos);
 
         if (mv.kind === "clash") {
-          eng.hintsLayer.rect(x, y, w, w).fill({ color: 0xf59e0b, alpha: 0.34 });
-          eng.hintsLayer.rect(x, y, w, w).stroke({ color: 0xfde047, width: 2.2 });
+          eng.hintsLayer.poly(quad).fill({ color: 0xf59e0b, alpha: 0.35 });
+          eng.hintsLayer.poly(quad).stroke({ color: 0xfde047, width: 2.2 });
           const tag = new PIXI.Text({
             text: `${mv.complexity?.size ?? 3}×${mv.complexity?.size ?? 3}`,
             style: {
@@ -489,19 +587,19 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
             },
           });
           tag.anchor.set(0.5);
-          tag.x = x + w / 2;
-          tag.y = y - 6;
+          tag.x = mc.x;
+          tag.y = mc.y - 22;
           eng.hintLabelsLayer.addChild(tag);
         } else if (mv.kind === "pickup") {
-          eng.hintsLayer.rect(x, y, w, w).fill({ color: 0x34d399, alpha: 0.32 });
-          eng.hintsLayer.rect(x, y, w, w).stroke({ color: 0x6ee7b7, width: 2.2 });
+          eng.hintsLayer.poly(quad).fill({ color: 0x34d399, alpha: 0.34 });
+          eng.hintsLayer.poly(quad).stroke({ color: 0x6ee7b7, width: 2.2 });
         } else {
           const col = mv.isSlide ? 0x38bdf8 : 0x34d399;
-          eng.hintsLayer.rect(x, y, w, w).fill({ color: col, alpha: 0.18 });
-          const cx = x + w / 2;
-          const cy = y + w / 2;
-          eng.hintsLayer.rect(cx - 5, cy - 5, 10, 10).fill({ color: col, alpha: 0.9 });
-          eng.hintsLayer.rect(cx - 5, cy - 5, 10, 10).stroke({ color: 0x090d16, width: 1.5 });
+          eng.hintsLayer.poly(quad).fill({ color: col, alpha: 0.2 });
+          eng.hintsLayer
+            .ellipse(mc.x, mc.y, 6, 4)
+            .fill({ color: col, alpha: 0.92 })
+            .stroke({ color: 0x090d16, width: 1.5 });
         }
       }
 
@@ -523,19 +621,25 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
 
         for (const shot of p.validShots) {
           const isRight = selectedPlayer.team === "blue";
-          const gx = isRight ? MARGIN_X + PITCH_COLS * CELL_SIZE : MARGIN_X - GOAL_DEPTH;
-          const gy = MARGIN_Y + shot.goalRow * CELL_SIZE + 2;
-          const color = shot.isContested ? 0xf59e0b : 0x22c55e;
-          eng.hintsLayer.rect(gx, gy, GOAL_DEPTH, CELL_SIZE - 4).fill({ color, alpha: 0.5 });
-          eng.hintsLayer.rect(gx, gy, GOAL_DEPTH, CELL_SIZE - 4).stroke({ color: 0xffffff, width: 1.5 });
+          const c0 = isRight ? PITCH_COLS : -1.45;
+          const c1 = isRight ? PITCH_COLS + 1.45 : 0;
+          const q0 = gridPoint(c0, shot.goalRow + 0.08);
+          const q1 = gridPoint(c1, shot.goalRow + 0.08);
+          const q2 = gridPoint(c1, shot.goalRow + 0.92);
+          const q3 = gridPoint(c0, shot.goalRow + 0.92);
+          const goalQuad = [q0.x, q0.y, q1.x, q1.y, q2.x, q2.y, q3.x, q3.y];
 
-          const toX = isRight ? gx + 4 : gx + GOAL_DEPTH - 4;
-          const toY = gy + (CELL_SIZE - 4) / 2;
+          const color = shot.isContested ? 0xf59e0b : 0x22c55e;
+          eng.hintsLayer.poly(goalQuad).fill({ color, alpha: 0.52 });
+          eng.hintsLayer.poly(goalQuad).stroke({ color: 0xffffff, width: 1.6 });
+
+          const mouthPt = gridPoint(isRight ? PITCH_COLS : 0, shot.goalRow + 0.5);
           eng.hintsLayer
             .moveTo(from.x, from.y)
-            .lineTo(toX, toY)
+            .lineTo(mouthPt.x, mouthPt.y)
             .stroke({ color, width: 2.5, alpha: 0.85 });
 
+          const centerGoal = gridPoint((c0 + c1) / 2, shot.goalRow + 0.5);
           const lbl = new PIXI.Text({
             text: shot.isContested ? `${shot.complexity?.size ?? 4}×${shot.complexity?.size ?? 4}` : "ГОЛ",
             style: {
@@ -547,8 +651,8 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
             },
           });
           lbl.anchor.set(0.5);
-          lbl.x = gx + GOAL_DEPTH / 2;
-          lbl.y = gy + (CELL_SIZE - 4) / 2;
+          lbl.x = centerGoal.x;
+          lbl.y = centerGoal.y;
           eng.hintLabelsLayer.addChild(lbl);
         }
       }
@@ -558,24 +662,13 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         if (origin) {
           const oc = cellCenter(origin.pos);
           eng.hintsLayer
-            .rect(
-              MARGIN_X + origin.pos.col * CELL_SIZE + 1,
-              MARGIN_Y + origin.pos.row * CELL_SIZE + 1,
-              CELL_SIZE - 2,
-              CELL_SIZE - 2
-            )
+            .poly(cellQuad(origin.pos.col, origin.pos.row, 0.03))
             .stroke({ color: 0x38bdf8, width: 2.5, alpha: 0.95 });
 
           const target = p.coachHint.targetPos
             ? cellCenter(p.coachHint.targetPos)
             : p.coachHint.goalRow !== undefined
-            ? {
-                x:
-                  origin.team === "blue"
-                    ? MARGIN_X + PITCH_COLS * CELL_SIZE + GOAL_DEPTH / 2
-                    : MARGIN_X - GOAL_DEPTH / 2,
-                y: MARGIN_Y + (p.coachHint.goalRow + 0.5) * CELL_SIZE,
-              }
+            ? gridPoint(origin.team === "blue" ? PITCH_COLS + 0.7 : -0.7, p.coachHint.goalRow + 0.5)
             : null;
           if (target) {
             eng.hintsLayer
@@ -591,15 +684,15 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng || !props.goalCelebrationTeam) return;
-    eng.shakeTime = 22;
-    eng.goalFlashTime = 48;
+    eng.shakeTime = 24;
+    eng.goalFlashTime = 50;
     const burstColor = props.goalCelebrationTeam === "blue" ? 0x60a5fa : 0xf87171;
-    const goalX =
-      props.goalCelebrationTeam === "blue"
-        ? MARGIN_X + PITCH_COLS * CELL_SIZE
-        : MARGIN_X;
-    spawnBurst(goalX, WORLD_H / 2, burstColor, 46);
-    spawnBurst(goalX, WORLD_H / 2, 0xfde047, 30);
+    const goalCenter = gridPoint(
+      props.goalCelebrationTeam === "blue" ? PITCH_COLS : 0,
+      PITCH_ROWS / 2
+    );
+    spawnBurst(goalCenter.x, goalCenter.y - 12, burstColor, 48);
+    spawnBurst(goalCenter.x, goalCenter.y - 16, 0xfde047, 34);
   }, [props.goalCelebrationTeam]);
 
   useEffect(() => {
@@ -621,7 +714,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       await app.init({
         width: WORLD_W,
         height: WORLD_H,
-        backgroundColor: 0x090e12,
+        backgroundColor: 0x050911,
         backgroundAlpha: 1,
         antialias: false,
         roundPixels: true,
@@ -648,7 +741,6 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       const worldContainer = new PIXI.Container();
       app.stage.addChild(worldContainer);
 
-      // Mount Old 90s CRT Monitor WebGL Shader Filter onto stage
       let crtHandle: CRTFilterHandle | null = null;
       try {
         crtHandle = createCRTFilter();
@@ -667,31 +759,32 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
 
       const ambientGfx = new PIXI.Graphics();
       const ambientMotes: AmbientMote[] = Array.from({ length: 48 }, (_, i) => ({
-        x: MARGIN_X + ((i * 197 + 31) % (PITCH_COLS * CELL_SIZE)),
-        y: MARGIN_Y + ((i * 251 + 67) % (PITCH_ROWS * CELL_SIZE)),
-        vx: 0.25 + (i % 5) * 0.14,
-        vy: ((i % 3) - 1) * 0.08,
+        col: ((i * 7.3) % PITCH_COLS),
+        row: ((i * 5.9) % PITCH_ROWS),
+        vc: 0.008 + (i % 5) * 0.004,
+        vr: ((i % 3) - 1) * 0.003,
         phase: i * 0.7,
         size: i % 4 === 0 ? 3 : 2,
       }));
 
+      // Animated Isometric Corner Flags at the 4 Pitch Corners
       const flagsLayer = new PIXI.Container();
       const flagFrames = createCornerFlagFrames("#ef4444");
       const corners = [
-        { x: MARGIN_X, y: MARGIN_Y, flip: 1 },
-        { x: MARGIN_X + PITCH_COLS * CELL_SIZE, y: MARGIN_Y, flip: -1 },
-        { x: MARGIN_X, y: MARGIN_Y + PITCH_ROWS * CELL_SIZE, flip: 1 },
-        { x: MARGIN_X + PITCH_COLS * CELL_SIZE, y: MARGIN_Y + PITCH_ROWS * CELL_SIZE, flip: -1 },
+        { pt: gridPoint(0, 0), flip: 1 },
+        { pt: gridPoint(PITCH_COLS, 0), flip: -1 },
+        { pt: gridPoint(0, PITCH_ROWS), flip: 1 },
+        { pt: gridPoint(PITCH_COLS, PITCH_ROWS), flip: -1 },
       ];
       corners.forEach((c) => {
         const flag = new PIXI.AnimatedSprite(flagFrames);
-        flag.anchor.set(0.2, 0.9);
+        flag.anchor.set(0.25, 0.9);
         flag.width = 24;
-        flag.height = 26;
+        flag.height = 28;
         flag.scale.x *= c.flip;
-        flag.x = c.x;
-        flag.y = c.y;
-        flag.animationSpeed = 0.09;
+        flag.x = c.pt.x;
+        flag.y = c.pt.y;
+        flag.animationSpeed = 0.1;
         flag.play();
         flagsLayer.addChild(flag);
       });
@@ -699,9 +792,26 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       const obstaclesLayer = new PIXI.Container();
       const hintsLayer = new PIXI.Graphics();
       const hintLabelsLayer = new PIXI.Container();
+      const hoverPreviewLayer = new PIXI.Graphics();
       const hoverCursor = new PIXI.Graphics();
       const ghostsLayer = new PIXI.Container();
       const playersLayer = new PIXI.Container();
+      const selectedArrow = new PIXI.Graphics();
+
+      const hoverPreviewTag = new PIXI.Container();
+      const hoverPreviewBg = new PIXI.Graphics();
+      const hoverPreviewText = new PIXI.Text({
+        text: "",
+        style: {
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 10,
+          fontWeight: "700",
+          fill: 0xffffff,
+        },
+      });
+      hoverPreviewText.anchor.set(0.5);
+      hoverPreviewTag.addChild(hoverPreviewBg, hoverPreviewText);
+      hoverPreviewTag.visible = false;
 
       const ballShadow = new PIXI.Graphics();
       const ballFrames = createBallAnimationFrames();
@@ -713,14 +823,13 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
       const particlesLayer = new PIXI.Container();
       const calloutsLayer = new PIXI.Container();
 
+      // Exact Isometric Parallelogram Hitbox Cells
       const hitLayer = new PIXI.Container();
       hitLayer.eventMode = "static";
       for (let r = 0; r < PITCH_ROWS; r++) {
         for (let c = 0; c < PITCH_COLS; c++) {
           const cell = new PIXI.Graphics();
-          cell
-            .rect(MARGIN_X + c * CELL_SIZE, MARGIN_Y + r * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-            .fill({ color: 0x000000, alpha: 0.001 });
+          cell.poly(cellQuad(c, r)).fill({ color: 0x000000, alpha: 0.001 });
           cell.eventMode = "static";
           cell.on("pointerover", () => {
             if (engineRef.current) engineRef.current.hoverCell = { col: c, row: r };
@@ -739,7 +848,6 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
             const cur = propsRef.current;
             if (!cur.isHumanTurn) return;
 
-            // Exact cell match first
             const exactValid = cur.validMoves.some(
               (m) => m.pos.col === c && m.pos.row === r
             );
@@ -748,7 +856,6 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
               return;
             }
 
-            // Mobile/touch friendly smart snap within 1.15 cells to nearest valid move or pass
             if (cur.selectedPlayerId) {
               let bestMoveDist = 1.25;
               let bestMovePos: Position | null = null;
@@ -780,7 +887,6 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
               }
             }
 
-            // Otherwise check if user tapped near an own player (helpful on small touchscreens)
             const ownNear = cur.players
               .filter((pl) => pl.team === cur.currentTurn)
               .map((pl) => ({ pl, d: Math.hypot(pl.pos.col - c, pl.pos.row - r) }))
@@ -797,12 +903,18 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         }
       }
 
+      // Isometric Goal Hitboxes (Left & Right)
       const addGoalHitboxes = (isRight: boolean) => {
-        const gx = isRight ? MARGIN_X + PITCH_COLS * CELL_SIZE : MARGIN_X - GOAL_DEPTH;
+        const c0 = isRight ? PITCH_COLS : -1.5;
+        const c1 = isRight ? PITCH_COLS + 1.5 : 0;
         for (const gRow of GOAL_ROWS) {
+          const p0 = gridPoint(c0, gRow);
+          const p1 = gridPoint(c1, gRow);
+          const p2 = gridPoint(c1, gRow + 1);
+          const p3 = gridPoint(c0, gRow + 1);
           const gBox = new PIXI.Graphics();
           gBox
-            .rect(gx, MARGIN_Y + gRow * CELL_SIZE, GOAL_DEPTH, CELL_SIZE)
+            .poly([p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y])
             .fill({ color: 0x000000, alpha: 0.001 });
           gBox.eventMode = "static";
           gBox.cursor = "pointer";
@@ -829,14 +941,17 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         obstaclesLayer,
         hintsLayer,
         hintLabelsLayer,
+        hoverPreviewLayer,
         hoverCursor,
         hitLayer,
         flagsLayer,
         ghostsLayer,
         playersLayer,
+        selectedArrow,
         ballShadow,
         ballSprite,
         particlesLayer,
+        hoverPreviewTag,
         calloutsLayer
       );
 
@@ -851,10 +966,16 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         pitchSprite,
         ambientGfx,
         ambientMotes,
+        flagsLayer,
         obstaclesLayer,
         hintsLayer,
         hintLabelsLayer,
         hoverCursor,
+        hoverPreviewLayer,
+        hoverPreviewTag,
+        hoverPreviewText,
+        hoverPreviewBg,
+        selectedArrow,
         playersLayer,
         ghostsLayer,
         ballShadow,
@@ -876,9 +997,12 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         lastCalloutId: "",
         hoverCell: null,
         baseFitScale: 1,
-        camZoom: 1,
+        camZoom: 1.42,
         camX: WORLD_W / 2,
         camY: WORLD_H / 2,
+        camRot: 0,
+        camSkewX: 0,
+        camTiltY: 1,
       };
 
       syncScene();
@@ -893,9 +1017,17 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         engineRef.current.baseFitScale = scale;
       };
 
+      const fitCanvasAfterRotate = () => {
+        fitCanvas();
+        window.setTimeout(fitCanvas, 80);
+      };
+
+      fitCanvasRef.current = fitCanvasAfterRotate;
       fitCanvas();
       resizeObs = new ResizeObserver(fitCanvas);
       resizeObs.observe(containerEl);
+      window.addEventListener("resize", fitCanvasRef.current);
+      window.addEventListener("orientationchange", fitCanvasRef.current);
 
       let globalClock = 0;
       app.ticker.add((ticker) => {
@@ -904,37 +1036,58 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         const dt = ticker.deltaTime;
         globalClock += dt * 0.06;
 
-        // Update CRT Shader time for subtle flicker & sync pulse
         if (eng.crtHandle && crtEnabledRef.current) {
           eng.crtHandle.setTime(globalClock);
         }
 
-        // 1. Animate 32x32 Pitch Surface
+        // 1. Animate 2.5D Isometric Pitch Surface & Stadium Atmosphere
         const pType = propsRef.current.pitchType;
         eng.ambientGfx.clear();
 
-        const sweepX = MARGIN_X + ((globalClock * 42) % (PITCH_COLS * CELL_SIZE + 180)) - 90;
-        if (sweepX > MARGIN_X - 80 && sweepX < MARGIN_X + PITCH_COLS * CELL_SIZE) {
+        // Diagonal Floodlight Shimmer Sweep in Isometric Coordinates
+        const sweepCol = ((globalClock * 1.4) % (PITCH_COLS + 6)) - 3;
+        if (sweepCol > -2 && sweepCol < PITCH_COLS) {
           const bandCol = pType === "ice" ? 0xe0f2fe : pType === "sand" ? 0xfef3c7 : 0xbbf7d0;
-          eng.ambientGfx
-            .rect(Math.max(MARGIN_X, sweepX), MARGIN_Y, 48, PITCH_ROWS * CELL_SIZE)
-            .fill({ color: bandCol, alpha: pType === "ice" ? 0.07 : 0.04 });
+          const sc0 = Math.max(0, sweepCol);
+          const sc1 = Math.min(PITCH_COLS, sweepCol + 1.6);
+          if (sc1 > sc0) {
+            const p0 = gridPoint(sc0, 0);
+            const p1 = gridPoint(sc1, 0);
+            const p2 = gridPoint(sc1, PITCH_ROWS);
+            const p3 = gridPoint(sc0, PITCH_ROWS);
+            eng.ambientGfx
+              .poly([p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y])
+              .fill({ color: bandCol, alpha: pType === "ice" ? 0.08 : 0.045 });
+          }
+        }
+
+        // Stadium Camera Flashes on Upper Bleachers
+        for (let f = 0; f < 3; f++) {
+          const flashWave = Math.sin(globalClock * 3.8 + f * 2.1);
+          if (flashWave > 0.96) {
+            const fc = ((Math.floor(globalClock * 2) + f * 11) * 3.7) % PITCH_COLS;
+            const fp = gridPoint(fc, -1.25);
+            eng.ambientGfx
+              .circle(fp.x, fp.y - 24, 3.5)
+              .fill({ color: 0xffffff, alpha: 0.85 });
+          }
         }
 
         const moteColor =
           pType === "ice" ? 0xe0f2fe : pType === "sand" ? 0xfde68a : 0x86efac;
         for (const m of eng.ambientMotes) {
-          const speedMult = pType === "sand" ? 1.5 : pType === "ice" ? 0.65 : 0.4;
-          m.x += m.vx * speedMult * dt;
-          m.y += m.vy * speedMult * dt;
-          if (m.x > MARGIN_X + PITCH_COLS * CELL_SIZE) m.x = MARGIN_X;
-          if (m.y < MARGIN_Y) m.y = MARGIN_Y + PITCH_ROWS * CELL_SIZE;
-          if (m.y > MARGIN_Y + PITCH_ROWS * CELL_SIZE) m.y = MARGIN_Y;
+          const speedMult = pType === "sand" ? 1.5 : pType === "ice" ? 0.65 : 0.45;
+          m.col += m.vc * speedMult * dt;
+          m.row += m.vr * speedMult * dt;
+          if (m.col > PITCH_COLS) m.col = 0;
+          if (m.row < 0) m.row = PITCH_ROWS;
+          if (m.row > PITCH_ROWS) m.row = 0;
 
+          const mp = gridPoint(m.col, m.row);
           const twinkle = 0.25 + 0.35 * Math.sin(globalClock * 2.2 + m.phase);
           if (twinkle > 0.15) {
             eng.ambientGfx
-              .rect(Math.round(m.x), Math.round(m.y), m.size, pType === "ice" ? 1 : m.size)
+              .rect(Math.round(mp.x), Math.round(mp.y), m.size, pType === "ice" ? 1 : m.size)
               .fill({ color: moteColor, alpha: twinkle * 0.55 });
           }
         }
@@ -942,29 +1095,41 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         if (pType === "obstacles") {
           const pulse = 0.5 + 0.5 * Math.sin(globalClock * 3);
           for (const obs of getPitchObstacles(pType)) {
-            const c = cellCenter(obs);
-            const r = 10 + pulse * 4;
+            const quad = cellQuad(obs.col, obs.row, 0.08 + pulse * 0.06);
             eng.ambientGfx
-              .rect(c.x - r, c.y - r, r * 2, r * 2)
-              .stroke({ color: 0xf97316, width: 1.2, alpha: 0.25 + pulse * 0.25 });
+              .poly(quad)
+              .stroke({ color: 0xf97316, width: 1.4, alpha: 0.28 + pulse * 0.25 });
           }
         }
 
         if (eng.goalFlashTime > 0) {
           eng.goalFlashTime = Math.max(0, eng.goalFlashTime - dt);
-          const flashAlpha = (Math.sin(eng.goalFlashTime * 0.8) * 0.5 + 0.5) * 0.55;
+          const flashAlpha = (Math.sin(eng.goalFlashTime * 0.8) * 0.5 + 0.5) * 0.58;
           const isBlueGoal = propsRef.current.goalCelebrationTeam === "blue";
-          const gx = isBlueGoal ? MARGIN_X + PITCH_COLS * CELL_SIZE : MARGIN_X - GOAL_DEPTH;
-          const gy = MARGIN_Y + GOAL_ROWS[0] * CELL_SIZE;
-          const gh = GOAL_ROWS.length * CELL_SIZE;
-          eng.ambientGfx.rect(gx, gy, GOAL_DEPTH, gh).fill({
-            color: isBlueGoal ? 0x60a5fa : 0xf87171,
-            alpha: flashAlpha,
-          });
+          const gc0 = isBlueGoal ? PITCH_COLS : -1.45;
+          const gc1 = isBlueGoal ? PITCH_COLS + 1.45 : 0;
+          const r0 = GOAL_ROWS[0];
+          const r1 = GOAL_ROWS[GOAL_ROWS.length - 1] + 1;
+          const gp0 = gridPoint(gc0, r0);
+          const gp1 = gridPoint(gc1, r0);
+          const gp2 = gridPoint(gc1, r1);
+          const gp3 = gridPoint(gc0, r1);
+          eng.ambientGfx
+            .poly([gp0.x, gp0.y, gp1.x, gp1.y, gp2.x, gp2.y, gp3.x, gp3.y])
+            .fill({
+              color: isBlueGoal ? 0x60a5fa : 0xf87171,
+              alpha: flashAlpha,
+            });
         }
 
-        // 2. Depth-sort, sprint afterimage ghosts, and animate all 22 footballers
-        eng.playersLayer.children.sort((a, b) => a.y - b.y);
+        // 2. Depth-sort 2.5D Footballers relative to camera rotation, Animate Sprints, Hops & Trails
+        const sinRot = Math.sin(eng.camRot);
+        const cosRot = Math.cos(eng.camRot);
+        const viewFlip = cosRot >= 0 ? 1 : -1;
+
+        eng.playersLayer.children.sort(
+          (a, b) => a.x * sinRot + a.y * cosRot - (b.x * sinRot + b.y * cosRot)
+        );
         eng.playerVisuals.forEach((vis, id) => {
           const dx = vis.tx - vis.container.x;
           const dy = vis.ty - vis.container.y;
@@ -972,45 +1137,60 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
 
           vis.container.x += dx * Math.min(1, 0.24 * dt);
           vis.container.y += dy * Math.min(1, 0.24 * dt);
+          vis.container.rotation = -eng.camRot;
 
           const isMoving = dist > 1.8;
-          vis.animClock += dt * (isMoving ? 0.3 : 0.055);
+          vis.animClock += dt * (isMoving ? 0.34 : 0.06);
+
+          if (vis.kickBoost > 0) {
+            vis.kickBoost = Math.max(0, vis.kickBoost - 0.07 * dt);
+          }
 
           if (isMoving) {
             const frameIdx = Math.floor(vis.animClock) % vis.frames.run.length;
             vis.sprite.texture = vis.frames.run[frameIdx];
+            vis.sprite.y = -Math.abs(Math.sin(vis.animClock * 1.4)) * 4;
 
-            // Kinetic sprint ghost trail on fast runs
             vis.ghostCooldown -= dt;
-            if (dist > 16 && vis.ghostCooldown <= 0) {
-              vis.ghostCooldown = 3;
+            if (dist > 14 && vis.ghostCooldown <= 0) {
+              vis.ghostCooldown = 2.6;
               const ghost = new PIXI.Sprite(vis.sprite.texture);
-              ghost.anchor.set(0.5, 0.56);
-              ghost.width = 34;
-              ghost.height = 40;
-              ghost.scale.x = vis.facing * (34 / 24);
-              ghost.alpha = 0.34;
+              ghost.anchor.set(0.5, 0.84);
+              ghost.width = 36;
+              ghost.height = 44;
+              ghost.scale.x = vis.facing * viewFlip * (36 / 30);
+              ghost.rotation = -eng.camRot;
+              ghost.alpha = 0.32;
               ghost.x = vis.container.x;
-              ghost.y = vis.container.y;
+              ghost.y = vis.container.y + vis.sprite.y * cosRot;
               eng.ghostsLayer.addChild(ghost);
               eng.particles.push({
                 gfx: ghost as unknown as PIXI.Graphics,
                 vx: 0,
                 vy: 0,
                 life: 0,
-                maxLife: 12,
+                maxLife: 11,
               });
             }
           } else {
             const isSel = propsRef.current.selectedPlayerId === id;
-            const frameIdx = Math.floor(vis.animClock * (isSel ? 1.8 : 1)) % vis.frames.idle.length;
+            const frameIdx =
+              Math.floor(vis.animClock * (isSel ? 1.8 : 1)) % vis.frames.idle.length;
             vis.sprite.texture = vis.frames.idle[frameIdx];
+            vis.sprite.y = isSel ? -Math.abs(Math.sin(globalClock * 4.5)) * 2.5 : 0;
           }
 
-          vis.sprite.scale.x = vis.facing * (34 / 24);
+          const stretch = 1 + vis.kickBoost * 0.14;
+          vis.sprite.scale.x = vis.facing * viewFlip * (36 / 30);
+          vis.sprite.scale.y = (44 / 36) * stretch;
         });
 
-        // 3. Ball Airborne Flight Arc + Shadow + Spin
+        // Counter-rotate corner flags, cones, and hint labels to keep 2.5D elements upright
+        for (const ch of eng.flagsLayer.children) ch.rotation = -eng.camRot;
+        for (const ch of eng.obstaclesLayer.children) ch.rotation = -eng.camRot;
+        for (const ch of eng.hintLabelsLayer.children) ch.rotation = -eng.camRot;
+
+        // 3. Ball Airborne Parabolic Flight Arc + Dynamic Ground Shadow + Spin
         eng.ballShadow.clear();
         let bx = eng.ballSprite.x;
         let by = eng.ballSprite.y;
@@ -1024,21 +1204,20 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           const groundX = fa.fromX + (fa.toX - fa.fromX) * t;
           const groundY = fa.fromY + (fa.toY - fa.fromY) * t;
           loft = Math.sin(t * Math.PI) * fa.peakHeight;
-          bx = groundX;
-          by = groundY - loft;
+          bx = groundX + sinRot * loft;
+          by = groundY - cosRot * loft;
           spinning = true;
 
-          // Motion ribbon trail spark
           const trailDot = new PIXI.Graphics();
           trailDot.rect(-2, -2, 4, 4).fill({ color: fa.trailColor });
           trailDot.x = bx;
           trailDot.y = by;
           eng.particlesLayer.addChild(trailDot);
-          eng.particles.push({ gfx: trailDot, vx: 0, vy: 0.15, life: 0, maxLife: 12 });
+          eng.particles.push({ gfx: trailDot, vx: 0, vy: 0.18 * cosRot, life: 0, maxLife: 13 });
 
           eng.ballShadow
-            .ellipse(groundX, groundY + 6, Math.max(4, 8 - loft * 0.08), 3)
-            .fill({ color: 0x000000, alpha: 0.38 });
+            .ellipse(groundX, groundY + 4 * cosRot, Math.max(4, 9 - loft * 0.08), 3.5)
+            .fill({ color: 0x000000, alpha: Math.max(0.18, 0.42 - loft * 0.004) });
 
           if (t >= 1) {
             eng.ballFlightAnim = null;
@@ -1051,37 +1230,114 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           by = eng.ballSprite.y + bdy * Math.min(1, 0.34 * dt);
           spinning = ballDist > 1.5;
 
+          const bounceHop = spinning ? Math.abs(Math.sin(globalClock * 12)) * 3 : 0;
           eng.ballShadow
-            .ellipse(bx, by + 6, 7, 3)
-            .fill({ color: 0x000000, alpha: 0.35 });
+            .ellipse(bx, by + 4 * cosRot, 8, 3.2)
+            .fill({ color: 0x000000, alpha: 0.38 });
+          bx += sinRot * bounceHop;
+          by -= cosRot * bounceHop;
         }
 
         eng.ballSprite.x = bx;
         eng.ballSprite.y = by;
-        const ballScaleBoost = 1 + loft * 0.012;
+        eng.ballSprite.rotation = -eng.camRot;
+        const ballScaleBoost = 1 + loft * 0.011;
         eng.ballSprite.width = 18 * ballScaleBoost;
         eng.ballSprite.height = 18 * ballScaleBoost;
 
         if (spinning) {
-          const bf = Math.floor(globalClock * 7) % eng.ballFrames.length;
+          const bf = Math.floor(globalClock * 8) % eng.ballFrames.length;
           eng.ballSprite.texture = eng.ballFrames[bf];
         } else {
           eng.ballSprite.texture = eng.ballFrames[0];
         }
 
-        // 4. Hover pixel bracket cursor on 32x32 cell
+        // 4. Isometric Hover Cursor + Trajectory & Outcome Preview
         eng.hoverCursor.clear();
+        eng.hoverPreviewLayer.clear();
+        eng.hoverPreviewTag.visible = false;
+
         if (eng.hoverCell && propsRef.current.isHumanTurn) {
-          const hx = MARGIN_X + eng.hoverCell.col * CELL_SIZE + 1;
-          const hy = MARGIN_Y + eng.hoverCell.row * CELL_SIZE + 1;
-          const hw = CELL_SIZE - 2;
-          const len = 7;
-          eng.hoverCursor
-            .moveTo(hx, hy + len).lineTo(hx, hy).lineTo(hx + len, hy)
-            .moveTo(hx + hw - len, hy).lineTo(hx + hw, hy).lineTo(hx + hw, hy + len)
-            .moveTo(hx, hy + hw - len).lineTo(hx, hy + hw).lineTo(hx + len, hy + hw)
-            .moveTo(hx + hw - len, hy + hw).lineTo(hx + hw, hy + hw).lineTo(hx + hw, hy + hw - len)
-            .stroke({ color: 0xffffff, width: 2, alpha: 0.78 });
+          const hq = cellQuad(eng.hoverCell.col, eng.hoverCell.row, 0.02);
+          eng.hoverCursor.poly(hq).stroke({ color: 0xffffff, width: 2, alpha: 0.85 });
+
+          const curProps = propsRef.current;
+          const selP = curProps.players.find((pl) => pl.id === curProps.selectedPlayerId);
+          if (selP) {
+            const hoveredMove = curProps.validMoves.find(
+              (m) => m.pos.col === eng.hoverCell!.col && m.pos.row === eng.hoverCell!.row
+            );
+            const hoveredPass = curProps.validPasses.find(
+              (ps) => ps.pos.col === eng.hoverCell!.col && ps.pos.row === eng.hoverCell!.row
+            );
+            if (hoveredMove || hoveredPass) {
+              const fromPt = cellCenter(selP.pos);
+              const toPt = cellCenter(eng.hoverCell);
+              const lineColor = hoveredPass
+                ? hoveredPass.isLob
+                  ? 0xc084fc
+                  : 0xfbbf24
+                : hoveredMove?.kind === "clash"
+                ? 0xf97316
+                : hoveredMove?.isSlide
+                ? 0x38bdf8
+                : 0x4ade80;
+
+              eng.hoverPreviewLayer
+                .moveTo(fromPt.x, fromPt.y)
+                .lineTo(toPt.x, toPt.y)
+                .stroke({ color: lineColor, width: 3, alpha: 0.9 });
+              eng.hoverPreviewLayer
+                .ellipse(toPt.x, toPt.y, 7, 4)
+                .fill({ color: lineColor, alpha: 0.92 });
+
+              const labelText = hoveredPass
+                ? hoveredPass.isLob
+                  ? "НАВЕС"
+                  : "ПАС"
+                : hoveredMove?.kind === "clash"
+                ? `СТЫК ${hoveredMove.complexity?.size ?? 3}×${hoveredMove.complexity?.size ?? 3}`
+                : hoveredMove?.kind === "pickup"
+                ? "ПОДБОР"
+                : hoveredMove?.isSlide
+                ? "ЛЁД +"
+                : "ХОД";
+
+              eng.hoverPreviewText.text = labelText;
+              const pillW = Math.max(44, labelText.length * 7 + 12);
+              eng.hoverPreviewBg.clear();
+              eng.hoverPreviewBg
+                .rect(-pillW / 2, -9, pillW, 18)
+                .fill({ color: 0x090d16, alpha: 0.92 })
+                .stroke({ color: lineColor, width: 1.5 });
+              eng.hoverPreviewTag.x = Math.max(46, Math.min(WORLD_W - 46, toPt.x - sinRot * 26));
+              eng.hoverPreviewTag.y = Math.max(22, Math.min(WORLD_H - 22, toPt.y - cosRot * 26));
+              eng.hoverPreviewTag.rotation = -eng.camRot;
+              eng.hoverPreviewTag.visible = true;
+            }
+          }
+        }
+
+        // 4b. Animated Overhead Pointer on Selected Player (always upright above head!)
+        eng.selectedArrow.clear();
+        const selId = propsRef.current.selectedPlayerId;
+        if (selId && propsRef.current.isHumanTurn) {
+          const selVis = eng.playerVisuals.get(selId);
+          if (selVis) {
+            const bob = Math.sin(globalClock * 6) * 3.5;
+            const ay = -45 + bob;
+            const arrowCol = propsRef.current.superDriveReady ? 0xfde047 : 0x4ade80;
+            eng.selectedArrow.x = selVis.container.x;
+            eng.selectedArrow.y = selVis.container.y;
+            eng.selectedArrow.rotation = -eng.camRot;
+            eng.selectedArrow
+              .moveTo(0, ay + 6)
+              .lineTo(-6, ay - 2)
+              .lineTo(6, ay - 2)
+              .closePath()
+              .fill({ color: arrowCol })
+              .stroke({ color: 0x05080f, width: 1.5 });
+          }
         }
 
         // 5. Particles & Ghost Trails update
@@ -1098,14 +1354,17 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           }
         }
 
-        // 6. Floating World-Space Tactical Callouts update
+        // 6. Floating World-Space Tactical Callouts update (upright in screen space)
         for (let i = eng.callouts.length - 1; i >= 0; i--) {
           const co = eng.callouts[i];
           co.life += dt;
-          co.container.y -= 0.45 * dt;
-          co.container.alpha = co.life > co.maxLife * 0.65
-            ? Math.max(0, 1 - (co.life - co.maxLife * 0.65) / (co.maxLife * 0.35))
-            : 1;
+          co.container.rotation = -eng.camRot;
+          co.container.x += sinRot * 0.45 * dt;
+          co.container.y -= cosRot * 0.45 * dt;
+          co.container.alpha =
+            co.life > co.maxLife * 0.65
+              ? Math.max(0, 1 - (co.life - co.maxLife * 0.65) / (co.maxLife * 0.35))
+              : 1;
           if (co.life >= co.maxLife) {
             eng.calloutsLayer.removeChild(co.container);
             co.container.destroy({ children: true });
@@ -1113,42 +1372,111 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           }
         }
 
-        // 7. Camera Zoom & Smooth Follow (1x Full 32x32 Pitch or 1.85x Tactical Close-Up)
-        const targetZoom = zoomRef.current ? 1.85 : 1;
-        eng.camZoom += (targetZoom - eng.camZoom) * Math.min(1, 0.16 * dt);
+        // 7. Camera Angle Preset + Smooth Pivot Zoom/Tilt/Rotate + Follow
+        const presetCfg = CAMERA_PRESET_META[presetRef.current];
+        const targetZoom = Math.max(0.95, Math.min(2.5, presetCfg.zoom + zoomOffsetRef.current));
+        eng.camZoom += (targetZoom - eng.camZoom) * Math.min(1, 0.14 * dt);
+
+        // Angular interpolation
+        eng.camRot += (presetCfg.rot - eng.camRot) * Math.min(1, 0.14 * dt);
+        eng.camSkewX += (presetCfg.skewX - eng.camSkewX) * Math.min(1, 0.14 * dt);
+        eng.camTiltY += (presetCfg.tiltY - eng.camTiltY) * Math.min(1, 0.14 * dt);
 
         const sel = propsRef.current.players.find(
           (pl) => pl.id === propsRef.current.selectedPlayerId
         );
-        const focusPt = sel ? cellCenter(sel.pos) : eng.ballTarget;
-        const desiredCamX = zoomRef.current
-          ? focusPt.x + panOffsetRef.current.x
-          : WORLD_W / 2;
-        const desiredCamY = zoomRef.current
-          ? focusPt.y + panOffsetRef.current.y
-          : WORLD_H / 2;
+        const carrier = propsRef.current.ball.carrierId
+          ? propsRef.current.players.find((pl) => pl.id === propsRef.current.ball.carrierId)
+          : null;
 
-        const halfViewW = WORLD_W / (2 * eng.camZoom);
-        const halfViewH = WORLD_H / (2 * eng.camZoom);
+        let desiredCamX = WORLD_W / 2 + panOffsetRef.current.x;
+        let desiredCamY = WORLD_H / 2 + panOffsetRef.current.y;
+
+        if (presetRef.current === "close") {
+          const focusPt = sel ? cellCenter(sel.pos) : eng.ballTarget;
+          desiredCamX = focusPt.x + panOffsetRef.current.x;
+          desiredCamY = focusPt.y + panOffsetRef.current.y;
+        } else if (presetRef.current === "tv" || targetZoom > 1.25) {
+          const targetPt = carrier
+            ? cellCenter(carrier.pos)
+            : sel
+            ? cellCenter(sel.pos)
+            : eng.ballTarget;
+          // Subtle TV broadcast blend between center & ball action
+          desiredCamX =
+            WORLD_W / 2 * 0.25 + targetPt.x * 0.75 + panOffsetRef.current.x;
+          desiredCamY =
+            WORLD_H / 2 * 0.25 + targetPt.y * 0.75 + panOffsetRef.current.y;
+        }
+
+        const halfViewW = Math.min(WORLD_W / 2, WORLD_W / (2 * Math.max(1, eng.camZoom)));
+        const halfViewH = Math.min(WORLD_H / 2, WORLD_H / (2 * Math.max(1, eng.camZoom)));
         const clampedX = Math.max(halfViewW, Math.min(WORLD_W - halfViewW, desiredCamX));
         const clampedY = Math.max(halfViewH, Math.min(WORLD_H - halfViewH, desiredCamY));
 
-        eng.camX += (clampedX - eng.camX) * Math.min(1, 0.16 * dt);
-        eng.camY += (clampedY - eng.camY) * Math.min(1, 0.16 * dt);
+        eng.camX += (clampedX - eng.camX) * Math.min(1, 0.15 * dt);
+        eng.camY += (clampedY - eng.camY) * Math.min(1, 0.15 * dt);
 
         let shakeX = 0;
         let shakeY = 0;
         if (eng.shakeTime > 0) {
           eng.shakeTime = Math.max(0, eng.shakeTime - dt);
-          const mag = (eng.shakeTime / 22) * 5.5;
+          const mag = (eng.shakeTime / 24) * 6;
           shakeX = (Math.random() - 0.5) * mag * 2;
           shakeY = (Math.random() - 0.5) * mag * 2;
         }
 
         const totalScale = eng.baseFitScale * eng.camZoom;
-        eng.worldContainer.scale.set(totalScale);
-        eng.worldContainer.x = (WORLD_W / 2 - eng.camX * eng.camZoom) * eng.baseFitScale + shakeX;
-        eng.worldContainer.y = (WORLD_H / 2 - eng.camY * eng.camZoom) * eng.baseFitScale + shakeY;
+        eng.worldContainer.pivot.set(eng.camX, eng.camY);
+        eng.worldContainer.position.set(
+          (WORLD_W / 2) * eng.baseFitScale + shakeX,
+          (WORLD_H / 2) * eng.baseFitScale + shakeY
+        );
+        eng.worldContainer.scale.set(totalScale, totalScale * eng.camTiltY);
+        eng.worldContainer.rotation = eng.camRot;
+        eng.worldContainer.skew.set(eng.camSkewX, 0);
+
+        // 8. Live 32x32 Radar Minimap whenever zoomed or non-wide angle is active
+        const mm = minimapCanvasRef.current;
+        if (mm && (eng.camZoom > 1.12 || presetRef.current !== "wide")) {
+          const mctx = mm.getContext("2d");
+          if (mctx) {
+            const mw = mm.width;
+            const mh = mm.height;
+            mctx.fillStyle = "#114726";
+            mctx.fillRect(0, 0, mw, mh);
+            mctx.strokeStyle = "rgba(255,255,255,0.45)";
+            mctx.lineWidth = 1;
+            mctx.strokeRect(1, 1, mw - 2, mh - 2);
+            mctx.beginPath();
+            mctx.moveTo(mw / 2, 1);
+            mctx.lineTo(mw / 2, mh - 1);
+            mctx.stroke();
+
+            for (const pl of propsRef.current.players) {
+              const px = ((pl.pos.col + 0.5) / PITCH_COLS) * mw;
+              const py = ((pl.pos.row + 0.5) / PITCH_ROWS) * mh;
+              mctx.fillStyle =
+                pl.id === propsRef.current.selectedPlayerId
+                  ? "#4ade80"
+                  : pl.team === "blue"
+                  ? "#38bdf8"
+                  : "#f87171";
+              mctx.fillRect(Math.round(px - 1.5), Math.round(py - 1.5), 3, 3);
+            }
+            const bxMm = ((propsRef.current.ball.pos.col + 0.5) / PITCH_COLS) * mw;
+            const byMm = ((propsRef.current.ball.pos.row + 0.5) / PITCH_ROWS) * mh;
+            mctx.fillStyle = "#fde047";
+            mctx.fillRect(Math.round(bxMm - 2), Math.round(byMm - 2), 4, 4);
+
+            const vx = ((eng.camX - halfViewW) / WORLD_W) * mw;
+            const vy = ((eng.camY - halfViewH) / WORLD_H) * mh;
+            const vw = ((halfViewW * 2) / WORLD_W) * mw;
+            const vh = ((halfViewH * 2) / WORLD_H) * mh;
+            mctx.strokeStyle = "#fde047";
+            mctx.strokeRect(vx, vy, vw, vh);
+          }
+        }
       });
     };
 
@@ -1157,6 +1485,8 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     return () => {
       cancelled = true;
       if (resizeObs) resizeObs.disconnect();
+      window.removeEventListener("resize", fitCanvasRef.current);
+      window.removeEventListener("orientationchange", fitCanvasRef.current);
       if (appInstance) {
         appInstance.destroy(true, { children: true });
       }
@@ -1187,102 +1517,205 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
 
   useEffect(() => {
     panOffsetRef.current = { x: 0, y: 0 };
-  }, [props.selectedPlayerId, props.ball.pos.col, props.ball.pos.row, zoomed]);
+  }, [props.selectedPlayerId, activePreset]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const lower = e.key.toLowerCase();
+      if (lower === "z") {
+        setCameraPreset(presetRef.current === "close" ? "wide" : "close");
+      } else if (lower === "v") {
+        const idx = CAMERA_PRESET_ORDER.indexOf(presetRef.current);
+        const next = CAMERA_PRESET_ORDER[(idx + 1) % CAMERA_PRESET_ORDER.length];
+        setCameraPreset(next);
+      } else if (lower === "r") {
+        panOffsetRef.current = { x: 0, y: 0 };
+        setZoomOffset(0);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const showMinimap = activePreset !== "wide" || zoomOffset > 0.1;
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center px-1.5 sm:px-6 pt-20 pb-24 sm:py-14 select-none">
-      {/* CRT Monitor Frame around 32x32 PixiJS Pitch */}
+    <div className="relative z-0 w-full h-full flex items-center justify-center px-1 sm:px-4 pt-12 pb-16 sm:pt-14 sm:pb-12 select-none [container-type:size]">
+      {/* Windows 95 Display Window + CRT Monitor Bezel around Isometric 32x32 PixiJS Pitch */}
       <div
-        className="relative flex items-center justify-center pc-inset-dark p-1 sm:p-2 overflow-hidden"
+        className="relative flex items-center justify-center pc-window p-[3px] overflow-hidden"
         style={{
-          width: "min(98vw, calc((100dvh - 180px) * 1152 / 1084))",
+          width: `min(100cqw, calc(100cqh * ${WORLD_W} / ${WORLD_H}))`,
           aspectRatio: `${WORLD_W} / ${WORLD_H}`,
         }}
       >
-        <div
-          ref={hostRef}
-          onWheel={(e) => {
-            if (e.deltaY < 0) setZoomed(true);
-            else if (e.deltaY > 0) setZoomed(false);
-          }}
-          onPointerDown={(e) => {
-            if (!zoomRef.current) return;
-            dragStateRef.current = {
-              active: true,
-              startX: e.clientX,
-              startY: e.clientY,
-              basePanX: panOffsetRef.current.x,
-              basePanY: panOffsetRef.current.y,
-              moved: false,
-            };
-          }}
-          onPointerMove={(e) => {
-            const ds = dragStateRef.current;
-            if (!ds.active || !zoomRef.current) return;
-            const dx = e.clientX - ds.startX;
-            const dy = e.clientY - ds.startY;
-            if (Math.hypot(dx, dy) > 8) {
-              ds.moved = true;
-            }
-            if (ds.moved && engineRef.current) {
-              const scale = engineRef.current.baseFitScale * engineRef.current.camZoom || 1;
-              panOffsetRef.current = {
-                x: Math.max(-380, Math.min(380, ds.basePanX - dx / scale)),
-                y: Math.max(-380, Math.min(380, ds.basePanY - dy / scale)),
+        <div className="relative w-full h-full pc-inset-dark p-0.5 overflow-hidden">
+          <div
+            ref={hostRef}
+            onWheel={(e) => {
+              setZoomOffset((prev) =>
+                Math.max(-0.4, Math.min(0.95, prev + (e.deltaY < 0 ? 0.18 : -0.18)))
+              );
+            }}
+            onPointerDown={(e) => {
+              dragStateRef.current = {
+                active: true,
+                startX: e.clientX,
+                startY: e.clientY,
+                basePanX: panOffsetRef.current.x,
+                basePanY: panOffsetRef.current.y,
+                moved: false,
               };
-            }
-          }}
-          onPointerUp={() => {
-            dragStateRef.current.active = false;
-            window.setTimeout(() => {
+            }}
+            onPointerMove={(e) => {
+              const ds = dragStateRef.current;
+              if (!ds.active) return;
+              const dx = e.clientX - ds.startX;
+              const dy = e.clientY - ds.startY;
+              if (Math.hypot(dx, dy) > 8) {
+                ds.moved = true;
+              }
+              if (ds.moved && engineRef.current) {
+                const eng = engineRef.current;
+                const scale = eng.baseFitScale * eng.camZoom || 1;
+                const cr = Math.cos(-eng.camRot);
+                const sr = Math.sin(-eng.camRot);
+                const vx = -dx / scale;
+                const vy = -dy / scale;
+                const wdx = vx * cr - vy * sr;
+                const wdy = vx * sr + vy * cr;
+                panOffsetRef.current = {
+                  x: Math.max(-440, Math.min(440, ds.basePanX + wdx)),
+                  y: Math.max(-440, Math.min(440, ds.basePanY + wdy)),
+                };
+              }
+            }}
+            onPointerUp={() => {
+              dragStateRef.current.active = false;
+              window.setTimeout(() => {
+                dragStateRef.current.moved = false;
+              }, 40);
+            }}
+            onPointerCancel={() => {
+              dragStateRef.current.active = false;
               dragStateRef.current.moved = false;
-            }, 40);
-          }}
-          onPointerCancel={() => {
-            dragStateRef.current.active = false;
-            dragStateRef.current.moved = false;
-          }}
-          className="w-full h-full relative touch-none"
-        />
+            }}
+            className="w-full h-full relative touch-none"
+          />
 
-        {/* Compact Retro Monitor Controls: CRT Shader + Camera Zoom */}
-        <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setCrtEnabled((v) => !v)}
-            title={crtEnabled ? "Отключить ЭЛТ-шейдер" : "Включить ЭЛТ-монитор 90-х"}
-            className={`h-7 px-2 text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
-              crtEnabled ? "pc-btn-active" : "pc-btn"
-            }`}
-          >
-            <Monitor className="w-3.5 h-3.5" />
-            <span>ЭЛТ</span>
-          </button>
+          {/* Live Interactive 32x32 Radar Minimap when Zoomed or Dynamic Camera Active */}
+          {showMinimap && (
+            <div className="hidden sm:block absolute top-2 left-2 z-10 pc-window p-0.5">
+              <canvas
+                ref={minimapCanvasRef}
+                width={90}
+                height={82}
+                title="Нажмите на карту для смещения фокуса камеры"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const rx = (e.clientX - rect.left) / rect.width;
+                  const ry = (e.clientY - rect.top) / rect.height;
+                  const worldTapX = rx * WORLD_W;
+                  const worldTapY = ry * WORLD_H;
+                  const sel = propsRef.current.players.find(
+                    (pl) => pl.id === propsRef.current.selectedPlayerId
+                  );
+                  const baseFocus =
+                    presetRef.current === "close"
+                      ? sel
+                        ? cellCenter(sel.pos)
+                        : engineRef.current?.ballTarget ?? { x: WORLD_W / 2, y: WORLD_H / 2 }
+                      : { x: WORLD_W / 2, y: WORLD_H / 2 };
+                  panOffsetRef.current = {
+                    x: Math.max(-450, Math.min(450, worldTapX - baseFocus.x)),
+                    y: Math.max(-450, Math.min(450, worldTapY - baseFocus.y)),
+                  };
+                }}
+                className="block cursor-pointer"
+                style={{ imageRendering: "pixelated" }}
+              />
+            </div>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setZoomed((z) => !z)}
-            title={zoomed ? "Полное поле 32×32 (1×)" : "Крупный план игроков (1.8×)"}
-            className="pc-btn h-7 px-2 text-[11px] font-bold flex items-center gap-1 whitespace-nowrap"
-          >
-            {zoomed ? (
-              <>
-                <ZoomOut className="w-3.5 h-3.5" />
-                <span>1× Поле</span>
-              </>
-            ) : (
-              <>
-                <ZoomIn className="w-3.5 h-3.5" />
-                <span>1.8× Зум</span>
-              </>
-            )}
-          </button>
+          {/* Camera Angle Switcher + Zoom & CRT Toolbar */}
+          <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 z-10 flex flex-wrap items-center justify-end gap-1 max-w-[96%]">
+            {/* Viewing Angle Presets */}
+            <div className="pc-window p-0.5 flex items-center gap-0.5">
+              <span className="hidden md:flex items-center gap-1 px-1.5 text-[10px] font-bold text-[#000080]">
+                <Camera className="w-3 h-3" />
+                <span>Ракурс:</span>
+              </span>
+              {CAMERA_PRESET_ORDER.map((preset) => {
+                const cfg = CAMERA_PRESET_META[preset];
+                const isAct = activePreset === preset;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setCameraPreset(preset)}
+                    title={cfg.title}
+                    className={`h-6 px-1.5 sm:px-2 text-[10px] font-bold whitespace-nowrap cursor-pointer flex items-center gap-1 ${
+                      isAct ? "pc-btn-active" : "pc-btn"
+                    }`}
+                  >
+                    {preset === "opposite" && <Compass className="w-3 h-3 shrink-0" />}
+                    <span>{cfg.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Smooth Zoom -/+ & Center Reset */}
+            <div className="pc-window p-0.5 flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setZoomOffset((z) => Math.max(-0.4, z - 0.25))}
+                title="Отдалить камеру"
+                className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
+              >
+                <ZoomOut className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  panOffsetRef.current = { x: 0, y: 0 };
+                  setZoomOffset(0);
+                }}
+                title="Сбросить смещение и центрировать камеру (R)"
+                className="pc-btn h-6 px-1.5 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <LocateFixed className="w-3 h-3 text-[#000080]" />
+                <span className="hidden lg:inline">Центр</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomOffset((z) => Math.min(0.95, z + 0.25))}
+                title="Приблизить камеру"
+                className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
+              >
+                <ZoomIn className="w-3 h-3" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCrtEnabled((v) => !v)}
+              title={crtEnabled ? "Отключить ЭЛТ-шейдер" : "Включить ЭЛТ-монитор 90-х"}
+              className={`h-7 px-2 text-[10px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+                crtEnabled ? "pc-btn-active" : "pc-btn"
+              }`}
+            >
+              <Monitor className="w-3 h-3" />
+              <span className="hidden sm:inline">ЭЛТ</span>
+            </button>
+          </div>
+
+          {!crtEnabled && (
+            <div className="crt-scanlines absolute inset-0 pointer-events-none opacity-20" />
+          )}
         </div>
-
-        {/* Fallback CSS scanlines only when WebGL CRT shader is toggled off */}
-        {!crtEnabled && (
-          <div className="crt-scanlines absolute inset-0 pointer-events-none opacity-20" />
-        )}
       </div>
     </div>
   );

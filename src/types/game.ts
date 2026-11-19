@@ -2,9 +2,12 @@ export type Team = "blue" | "red";
 
 export type PlayerRole = "GK" | "DEF" | "MID" | "WNG" | "FWD";
 
-export type GameMode = "ai" | "local";
+export type GameMode = "ai" | "local" | "online";
 export type AIDifficulty = "rookie" | "tactical" | "pro";
+export type AIOpponentEngine = "classic" | "groq";
+export type CameraPreset = "wide" | "tv" | "close" | "topdown" | "opposite";
 export type BlitzPace = "turbo" | "blitz" | "relaxed";
+export type AIPace = "normal" | "fast";
 
 export type PitchType = "turf" | "ice" | "sand" | "obstacles";
 
@@ -15,6 +18,8 @@ export type BlitzModePreference = "dynamic" | BlitzVariant;
 
 export type GamePhase =
   | "TITLE_MENU"
+  | "MULTIPLAYER_LOBBY"
+  | "SPECTATE"
   | "PLAYING"
   | "BLITZ_DUEL"
   | "GOAL_CELEBRATION"
@@ -38,6 +43,7 @@ export interface BallFlightEvent {
   to: Position;
   isLob: boolean;
   isShot: boolean;
+  isSuperShot?: boolean;
 }
 
 export interface PlayerPiece {
@@ -46,6 +52,7 @@ export interface PlayerPiece {
   role: PlayerRole;
   number: number;
   skinTone: number; // 0..3 for realistic visual variety
+  stamina: number; // 0..100 tactical stamina
   pos: Position;
 }
 
@@ -120,7 +127,7 @@ export interface CoachAnalysis {
   styleSummary: string;
   tacticalAdvice: string[];
   upgradeRecommendation: string;
-  source: "gemini" | "local";
+  source: "gemini" | "groq" | "local";
 }
 
 export interface BlitzComplexity {
@@ -171,6 +178,7 @@ export interface ActiveBlitzDuel {
   contestedPos: Position;
   initiatorOrigin: Position;
   isShotDuel: boolean;
+  isSuperShot?: boolean;
   goalRow?: number;
   complexity: BlitzComplexity;
   ballOwnerBeforeId: string | null;
@@ -182,7 +190,7 @@ export interface CommentaryItem {
   id: string;
   turn: number;
   text: string;
-  source: "gemini" | "local";
+  source: "gemini" | "groq" | "local";
   highlight?: "goal" | "blitz" | "save" | "normal";
 }
 
@@ -425,3 +433,106 @@ export const BLITZ_PACE_MS: Record<BlitzPace, number | null> = {
   blitz: 3500,
   relaxed: null,
 };
+
+export interface OnlineUserInfo {
+  clientId: string;
+  clubName: string;
+  managerName: string;
+}
+
+export interface MultiplayerRoomInfo {
+  id: string;
+  name: string;
+  hostClientId: string;
+  hostName: string;
+  hostClub: string;
+  pitchType: PitchType;
+  blitzPace: BlitzPace;
+  blitzModePref: BlitzModePreference;
+  challengeCode?: string;
+  status: "waiting" | "playing";
+  createdAt: number;
+}
+
+export interface LobbyChatMessage {
+  id: string;
+  sender: string;
+  clubName?: string;
+  text: string;
+  time: string;
+  isSystem?: boolean;
+}
+
+export interface MatchTelemetryStats {
+  blueTurns: number;
+  redTurns: number;
+  passesBlue: number;
+  passesRed: number;
+  shotsBlue: number;
+  shotsRed: number;
+  blitzBlueWon: number;
+  blitzRedWon: number;
+}
+
+export interface LiveMatchSummary {
+  id: string;
+  kind: "pvp" | "human_ai" | "ai_league";
+  roomName: string;
+  hostName: string;
+  guestName: string;
+  scoreBlue: number;
+  scoreRed: number;
+  turn: number;
+  maxTurns: number;
+  currentTurn: Team;
+  pitchType: PitchType;
+  pace: BlitzPace;
+  viewers: number;
+  status: "playing" | "blitz" | "goal" | "finished";
+  possessionBluePct: number;
+  latestEvent?: string;
+}
+
+export interface ServerDuelState {
+  duel: ActiveBlitzDuel;
+  board: Array<"X" | "O" | "BLOCKED" | null>;
+  turnMark: "X" | "O";
+  xQueue: number[];
+  oQueue: number[];
+  winningLine: number[];
+  finished: boolean;
+  winnerTeam: Team | "draw" | null;
+  statusMessage: string;
+  wasTimeout: boolean;
+}
+
+export interface ServerMatchSnapshot {
+  id: string;
+  kind: "pvp" | "human_ai" | "ai_league";
+  roomName: string;
+  hostClientId: string;
+  guestClientId: string | null;
+  hostName: string;
+  guestName: string;
+  pitchType: PitchType;
+  pace: BlitzPace;
+  blitzModePref: BlitzModePreference;
+  difficulty: AIDifficulty;
+  players: PlayerPiece[];
+  ball: BallState;
+  currentTurn: Team;
+  turnCount: number;
+  scoreBlue: number;
+  scoreRed: number;
+  status: "playing" | "blitz" | "goal" | "finished";
+  winner: Team | "draw" | null;
+  activeDuelState: ServerDuelState | null;
+  lastMoveTrace: { from: Position; to: Position; team: Team } | null;
+  ballFlight: BallFlightEvent | null;
+  goalBanner: { team: Team; text: string } | null;
+  callout: FloatingCallout | null;
+  commentary: CommentaryItem[];
+  telemetry: MatchTelemetryStats;
+  viewers: number;
+  updatedAt: number;
+}
