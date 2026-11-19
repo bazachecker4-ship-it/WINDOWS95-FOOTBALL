@@ -8,16 +8,24 @@ export type DesktopWindowId =
   | "lobby"
   | "challenge"
   | "coach"
+  | "tournaments"
+  | "tactics"
+  | "stats"
+  | "settings"
   | "rules";
 
 export const WINDOW_TASKBAR_LABELS: Record<DesktopWindowId, string> = {
-  setup: "BLITZ_FOOTBALL_95.EXE",
-  profile: "CLUB_PROFILE.EXE",
-  squad: "SQUAD_MANAGER.EXE",
-  lobby: "NET_LOBBY_95.EXE",
-  challenge: "CHALLENGE_95.EXE",
-  coach: "AI_COACH.SYS",
-  rules: "HELP.HLP",
+  setup: "WINDOWS 95 FOOTBALL",
+  profile: "Профиль клуба",
+  squad: "Состав команды",
+  lobby: "Онлайн и Эфир",
+  challenge: "Вызов QR",
+  coach: "Советы тренера",
+  tournaments: "Турниры",
+  tactics: "Тактика команды",
+  stats: "Статистика матча",
+  settings: "Настройки",
+  rules: "Помощь (HELP.HLP)",
 };
 
 export interface StatusPane {

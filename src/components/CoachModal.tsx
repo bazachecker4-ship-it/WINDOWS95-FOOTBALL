@@ -9,8 +9,9 @@ import {
   ROLE_META,
   SquadProgressionState,
 } from "../types/game";
-import { BrainCircuit, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { BrainCircuit, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { Win95Window } from "./Win95Window";
+import { PixelCoachPortrait } from "./Win95Art";
 
 interface CoachModalProps {
   pitchType: PitchType;
@@ -43,7 +44,7 @@ export const CoachModal: React.FC<CoachModalProps> = ({
   isActive,
   isMinimized,
   cascadeIndex = 4,
-  topBoundary = 40,
+  topBoundary = 42,
   onFocus,
   onMinimize,
   onOpenSquad,
@@ -92,7 +93,7 @@ export const CoachModal: React.FC<CoachModalProps> = ({
     } catch {
       setAnalysis({
         styleSummary:
-          "Вы развиваете атаки через центр поля. Добавьте больше диагональных пасов, чтобы обходить защитников без сложных дуэлей.",
+          "Попробуйте больше использовать фланги. Соперник уязвим на краях поля и открывает зоны для рывка.",
         tacticalAdvice: [
           `Учитывайте особенности покрытия «${PITCH_META[pitchType].name}» при планировании рывков.`,
           "Используйте Вингера (Конь) для неожиданного выхода на фланг штрафной.",
@@ -115,38 +116,67 @@ export const CoachModal: React.FC<CoachModalProps> = ({
 
   return (
     <Win95Window
-      title="AI_COACH.SYS — Тактический разбор"
-      icon={<BrainCircuit className="w-3.5 h-3.5 shrink-0" />}
-      ariaLabel="Разбор от ИИ-Тренера"
+      title="Советы тренера"
+      icon={<BrainCircuit className="w-3.5 h-3.5 text-amber-200 shrink-0" />}
+      ariaLabel="Советы тренера"
       zIndex={zIndex}
       isActive={isActive}
       isMinimized={isMinimized}
       cascadeIndex={cascadeIndex}
       topBoundary={topBoundary}
-      defaultWidth={580}
-      defaultHeight={530}
+      defaultWidth={560}
+      defaultHeight={460}
       minWidth={320}
-      minHeight={340}
+      minHeight={320}
       onFocus={onFocus}
       onMinimize={onMinimize}
       onClose={onClose}
       statusBarPanes={[
-        { text: `Счёт ${scoreBlue}:${scoreRed} · Ход ${turnCount}`, flex: true },
+        { text: `Счёт ${scoreBlue}:${scoreRed} · Ход ${turnCount} · ${PITCH_META[pitchType].name}`, flex: true },
         {
           text:
             analysis?.source === "groq"
               ? "Groq AI: ONLINE"
               : analysis?.source === "gemini"
               ? "Gemini AI: ONLINE"
-              : "Анализ: LOCAL",
+              : "Тренер-штаб: 95",
         },
       ]}
     >
-      <div className="p-4 space-y-3 overflow-y-auto flex-1">
-          <div className="text-xs text-slate-800 font-medium">
-            Покрытие: {PITCH_META[pitchType].name} · Ведущая фигура: {ROLE_META[mostUsedRole].name}
+      <div className="p-3.5 sm:p-4 flex-1 overflow-y-auto flex items-center justify-center bg-[#c0c0c0]">
+        <div className="w-full max-w-2xl space-y-3">
+          {/* Top Coach Card matching Screenshot 1 (Portrait left + White Win95 speech box right) */}
+          <div className="grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-3 items-stretch">
+            <div className="pc-field p-1.5 bg-[#7da7e2] flex items-center justify-center shrink-0">
+              <PixelCoachPortrait className="w-28 h-28 sm:w-32 sm:h-32" />
+            </div>
+
+            <div className="pc-field p-3 flex flex-col justify-between gap-2 text-black min-h-[144px]">
+              {loading ? (
+                <div className="text-xs font-bold text-[#000080] py-6 text-center">
+                  ИИ-Тренер изучает расстановку и телеметрию матча...
+                </div>
+              ) : (
+                analysis && (
+                  <div className="space-y-2 text-xs leading-relaxed">
+                    <p className="font-bold text-slate-950 text-[13px]">{analysis.styleSummary}</p>
+                    <ul className="space-y-1 text-slate-800">
+                      {analysis.tacticalAdvice.map((tip, idx) => (
+                        <li key={idx} className="leading-snug">
+                          • {tip}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="pt-1.5 border-t border-slate-300 text-[11px] font-bold text-[#000080]">
+                      План прокачки: <span className="font-medium text-slate-900">{analysis.upgradeRecommendation}</span>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
           </div>
 
+          {/* Match Telemetry Bar */}
           <div className="grid grid-cols-4 gap-2 text-center">
             {[
               { label: "Ходы", val: stats.moves },
@@ -158,53 +188,13 @@ export const CoachModal: React.FC<CoachModalProps> = ({
                 <div className="font-display text-xl font-bold tabular-nums text-emerald-300">
                   {item.val}
                 </div>
-                <div className="text-[11px] text-slate-400">{item.label}</div>
+                <div className="text-[11px] text-slate-300">{item.label}</div>
               </div>
             ))}
           </div>
 
-          {loading ? (
-            <div className="pc-inset-dark py-8 text-center text-xs text-emerald-300">
-              C:\COACH&gt; Анализ телеметрии матча...
-            </div>
-          ) : (
-            analysis && (
-              <div className="space-y-2.5">
-                <div className="pc-inset-dark p-3">
-                  <div className="text-xs font-bold text-sky-300 mb-1">
-                    Анализ стиля игры
-                  </div>
-                  <p className="text-xs text-slate-200 leading-relaxed">
-                    {analysis.styleSummary}
-                  </p>
-                </div>
-
-                <div className="pc-inset-dark p-3">
-                  <div className="text-xs font-bold text-emerald-300 mb-1">
-                    Тактические рекомендации
-                  </div>
-                  <ul className="space-y-1 text-xs text-slate-200">
-                    {analysis.tacticalAdvice.map((tip, idx) => (
-                      <li key={idx} className="leading-snug">
-                        {idx + 1}. {tip}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="pc-inset-dark p-3">
-                  <div className="text-xs font-bold text-amber-300 mb-1">
-                    План прокачки фигур
-                  </div>
-                  <p className="text-xs text-slate-200 leading-relaxed">
-                    {analysis.upgradeRecommendation}
-                  </p>
-                </div>
-              </div>
-            )
-          )}
-
-          <div className="pt-1 flex items-center justify-between gap-3">
+          {/* Classic Win95 Bottom Actions */}
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
               onClick={fetchAnalysis}
@@ -212,19 +202,31 @@ export const CoachModal: React.FC<CoachModalProps> = ({
               className="pc-btn px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              <span>Обновить</span>
+              <span>Обновить совет</span>
             </button>
 
-            <button
-              type="button"
-              onClick={onOpenSquad}
-              className="pc-btn-primary px-4 py-1.5 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Команда ({progression.skillPoints})</span>
-            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={onOpenSquad}
+                className="pc-btn px-3.5 py-1.5 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-[#000080]" />
+                <span>Состав ({progression.skillPoints})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="pc-btn-primary px-6 py-1.5 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>OK</span>
+              </button>
+            </div>
           </div>
         </div>
+      </div>
     </Win95Window>
   );
 };

@@ -109,6 +109,11 @@ interface PixiPitchCanvasProps {
   goalCelebrationTeam: Team | null;
   cameraPreset?: CameraPreset;
   onChangeCameraPreset?: (preset: CameraPreset) => void;
+  crtEnabled?: boolean;
+  onToggleCrt?: () => void;
+  onlineCount?: number;
+  onOpenLobby?: () => void;
+  hideHudWidgets?: boolean;
   onSelectPlayer: (playerId: string) => void;
   onCellClick: (pos: Position) => void;
   onPassToPlayer: (targetId: string) => void;
@@ -160,9 +165,7 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
   const propsRef = useRef(props);
   propsRef.current = props;
 
-  const [internalPreset, setInternalPreset] = useState<CameraPreset>(() =>
-    typeof window !== "undefined" && window.innerWidth < 640 ? "tv" : "tv"
-  );
+  const [internalPreset, setInternalPreset] = useState<CameraPreset>("tv");
   const activePreset = props.cameraPreset ?? internalPreset;
   const presetRef = useRef<CameraPreset>(activePreset);
   presetRef.current = activePreset;
@@ -188,9 +191,14 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     moved: boolean;
   }>({ active: false, startX: 0, startY: 0, basePanX: 0, basePanY: 0, moved: false });
 
-  const [crtEnabled, setCrtEnabled] = useState(true);
-  const crtEnabledRef = useRef(true);
+  const [internalCrt, setInternalCrt] = useState(false);
+  const crtEnabled = props.crtEnabled ?? internalCrt;
+  const crtEnabledRef = useRef(crtEnabled);
   crtEnabledRef.current = crtEnabled;
+  const toggleCrt = () => {
+    if (propsRef.current.onToggleCrt) propsRef.current.onToggleCrt();
+    else setInternalCrt((v) => !v);
+  };
 
   const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fitCanvasRef = useRef<() => void>(() => {});
@@ -491,19 +499,20 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         vis.staminaBar.rect(-barW / 2, 17, fillW, 2).fill({ color: barCol });
       }
 
-      // Isometric elliptical floor rings under player boots
+      // Isometric glowing cyan-white ring under selected player (matching Windows 95 Football!)
       vis.ring.clear();
       if (isSelected) {
-        const selColor = p.superDriveReady && player.team === "blue" ? 0xfde047 : 0x4ade80;
-        vis.ring.ellipse(0, 1, 16, 8).stroke({ color: selColor, width: 2.5 });
-        vis.ring.ellipse(0, 1, 12, 6).fill({ color: selColor, alpha: 0.2 });
+        const selColor = p.superDriveReady && player.team === "blue" ? 0xfde047 : 0x22d3ee;
+        vis.ring.ellipse(0, 1, 18, 9).stroke({ color: selColor, width: 3.5, alpha: 0.45 });
+        vis.ring.ellipse(0, 1, 15, 7.5).stroke({ color: 0xffffff, width: 2 });
+        vis.ring.ellipse(0, 1, 13, 6.2).fill({ color: selColor, alpha: 0.24 });
       } else if (isPassTarget) {
         const pCol = passOpt?.isLob ? 0xc084fc : 0xfbbf24;
         vis.ring.ellipse(0, 1, 16, 8).stroke({ color: pCol, width: 2.5 });
       } else if (isClashTarget) {
         vis.ring.ellipse(0, 1, 16, 8).stroke({ color: 0xf97316, width: 2.5 });
       } else if (hasBall) {
-        vis.ring.ellipse(0, 1, 14, 7).stroke({ color: 0xfef08a, width: 1.8, alpha: 0.9 });
+        vis.ring.ellipse(0, 1, 15, 7.5).stroke({ color: 0x38bdf8, width: 2, alpha: 0.9 });
       }
     }
 
@@ -1318,25 +1327,25 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           }
         }
 
-        // 4b. Animated Overhead Pointer on Selected Player (always upright above head!)
+        // 4b. Classic Blue Downward Triangle Marker above Selected Player (matching screenshot!)
         eng.selectedArrow.clear();
         const selId = propsRef.current.selectedPlayerId;
-        if (selId && propsRef.current.isHumanTurn) {
+        if (selId) {
           const selVis = eng.playerVisuals.get(selId);
           if (selVis) {
-            const bob = Math.sin(globalClock * 6) * 3.5;
-            const ay = -45 + bob;
-            const arrowCol = propsRef.current.superDriveReady ? 0xfde047 : 0x4ade80;
+            const bob = Math.sin(globalClock * 6) * 3.0;
+            const ay = -46 + bob;
+            const arrowCol = propsRef.current.superDriveReady ? 0xfde047 : 0x2563eb;
             eng.selectedArrow.x = selVis.container.x;
             eng.selectedArrow.y = selVis.container.y;
             eng.selectedArrow.rotation = -eng.camRot;
             eng.selectedArrow
-              .moveTo(0, ay + 6)
-              .lineTo(-6, ay - 2)
-              .lineTo(6, ay - 2)
+              .moveTo(0, ay + 7)
+              .lineTo(-7, ay - 3)
+              .lineTo(7, ay - 3)
               .closePath()
               .fill({ color: arrowCol })
-              .stroke({ color: 0x05080f, width: 1.5 });
+              .stroke({ color: 0xffffff, width: 1.5 });
           }
         }
 
@@ -1436,45 +1445,52 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
         eng.worldContainer.rotation = eng.camRot;
         eng.worldContainer.skew.set(eng.camSkewX, 0);
 
-        // 8. Live 32x32 Radar Minimap whenever zoomed or non-wide angle is active
+        // 8. Always-visible Live Tactical Radar Minimap (Bottom-Right like Win95 Football)
         const mm = minimapCanvasRef.current;
-        if (mm && (eng.camZoom > 1.12 || presetRef.current !== "wide")) {
+        if (mm) {
           const mctx = mm.getContext("2d");
           if (mctx) {
             const mw = mm.width;
             const mh = mm.height;
-            mctx.fillStyle = "#114726";
+            mctx.fillStyle = "#166534";
             mctx.fillRect(0, 0, mw, mh);
-            mctx.strokeStyle = "rgba(255,255,255,0.45)";
+            mctx.strokeStyle = "rgba(255,255,255,0.85)";
             mctx.lineWidth = 1;
-            mctx.strokeRect(1, 1, mw - 2, mh - 2);
+            mctx.strokeRect(2, 2, mw - 4, mh - 4);
             mctx.beginPath();
-            mctx.moveTo(mw / 2, 1);
-            mctx.lineTo(mw / 2, mh - 1);
+            mctx.moveTo(mw / 2, 2);
+            mctx.lineTo(mw / 2, mh - 2);
             mctx.stroke();
+            mctx.beginPath();
+            mctx.arc(mw / 2, mh / 2, 9, 0, Math.PI * 2);
+            mctx.stroke();
+            mctx.strokeRect(2, mh * 0.25, 13, mh * 0.5);
+            mctx.strokeRect(mw - 15, mh * 0.25, 13, mh * 0.5);
 
             for (const pl of propsRef.current.players) {
               const px = ((pl.pos.col + 0.5) / PITCH_COLS) * mw;
               const py = ((pl.pos.row + 0.5) / PITCH_ROWS) * mh;
               mctx.fillStyle =
                 pl.id === propsRef.current.selectedPlayerId
-                  ? "#4ade80"
+                  ? "#fde047"
                   : pl.team === "blue"
-                  ? "#38bdf8"
-                  : "#f87171";
-              mctx.fillRect(Math.round(px - 1.5), Math.round(py - 1.5), 3, 3);
+                  ? "#ffffff"
+                  : "#ef4444";
+              mctx.fillRect(Math.round(px - 2), Math.round(py - 2), 4, 4);
             }
             const bxMm = ((propsRef.current.ball.pos.col + 0.5) / PITCH_COLS) * mw;
             const byMm = ((propsRef.current.ball.pos.row + 0.5) / PITCH_ROWS) * mh;
-            mctx.fillStyle = "#fde047";
-            mctx.fillRect(Math.round(bxMm - 2), Math.round(byMm - 2), 4, 4);
+            mctx.fillStyle = "#facc15";
+            mctx.fillRect(Math.round(bxMm - 2.5), Math.round(byMm - 2.5), 5, 5);
 
-            const vx = ((eng.camX - halfViewW) / WORLD_W) * mw;
-            const vy = ((eng.camY - halfViewH) / WORLD_H) * mh;
-            const vw = ((halfViewW * 2) / WORLD_W) * mw;
-            const vh = ((halfViewH * 2) / WORLD_H) * mh;
-            mctx.strokeStyle = "#fde047";
-            mctx.strokeRect(vx, vy, vw, vh);
+            if (eng.camZoom > 1.08) {
+              const vx = ((eng.camX - halfViewW) / WORLD_W) * mw;
+              const vy = ((eng.camY - halfViewH) / WORLD_H) * mh;
+              const vw = ((halfViewW * 2) / WORLD_W) * mw;
+              const vh = ((halfViewH * 2) / WORLD_H) * mh;
+              mctx.strokeStyle = "rgba(253, 224, 71, 0.85)";
+              mctx.strokeRect(vx, vy, vw, vh);
+            }
           }
         }
       });
@@ -1539,184 +1555,204 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const showMinimap = activePreset !== "wide" || zoomOffset > 0.1;
+  const onlineCount = props.onlineCount ?? 1;
 
   return (
-    <div className="relative z-0 w-full h-full flex items-center justify-center px-1 sm:px-4 pt-12 pb-16 sm:pt-14 sm:pb-12 select-none [container-type:size]">
-      {/* Windows 95 Display Window + CRT Monitor Bezel around Isometric 32x32 PixiJS Pitch */}
+    <div className="relative z-0 w-full h-full flex items-center justify-center bg-[#070c14] pt-[46px] select-none [container-type:size]">
+      {/* Full-Interior 2.5D Stadium Canvas inside WINDOWS 95 FOOTBALL Window */}
       <div
-        className="relative flex items-center justify-center pc-window p-[3px] overflow-hidden"
+        className="relative flex items-center justify-center overflow-hidden"
         style={{
           width: `min(100cqw, calc(100cqh * ${WORLD_W} / ${WORLD_H}))`,
           aspectRatio: `${WORLD_W} / ${WORLD_H}`,
         }}
       >
-        <div className="relative w-full h-full pc-inset-dark p-0.5 overflow-hidden">
-          <div
-            ref={hostRef}
-            onWheel={(e) => {
-              setZoomOffset((prev) =>
-                Math.max(-0.4, Math.min(0.95, prev + (e.deltaY < 0 ? 0.18 : -0.18)))
-              );
-            }}
-            onPointerDown={(e) => {
-              dragStateRef.current = {
-                active: true,
-                startX: e.clientX,
-                startY: e.clientY,
-                basePanX: panOffsetRef.current.x,
-                basePanY: panOffsetRef.current.y,
-                moved: false,
+        <div
+          ref={hostRef}
+          onWheel={(e) => {
+            setZoomOffset((prev) =>
+              Math.max(-0.4, Math.min(0.95, prev + (e.deltaY < 0 ? 0.18 : -0.18)))
+            );
+          }}
+          onPointerDown={(e) => {
+            dragStateRef.current = {
+              active: true,
+              startX: e.clientX,
+              startY: e.clientY,
+              basePanX: panOffsetRef.current.x,
+              basePanY: panOffsetRef.current.y,
+              moved: false,
+            };
+          }}
+          onPointerMove={(e) => {
+            const ds = dragStateRef.current;
+            if (!ds.active) return;
+            const dx = e.clientX - ds.startX;
+            const dy = e.clientY - ds.startY;
+            if (Math.hypot(dx, dy) > 8) {
+              ds.moved = true;
+            }
+            if (ds.moved && engineRef.current) {
+              const eng = engineRef.current;
+              const scale = eng.baseFitScale * eng.camZoom || 1;
+              const cr = Math.cos(-eng.camRot);
+              const sr = Math.sin(-eng.camRot);
+              const vx = -dx / scale;
+              const vy = -dy / scale;
+              const wdx = vx * cr - vy * sr;
+              const wdy = vx * sr + vy * cr;
+              panOffsetRef.current = {
+                x: Math.max(-440, Math.min(440, ds.basePanX + wdx)),
+                y: Math.max(-440, Math.min(440, ds.basePanY + wdy)),
               };
-            }}
-            onPointerMove={(e) => {
-              const ds = dragStateRef.current;
-              if (!ds.active) return;
-              const dx = e.clientX - ds.startX;
-              const dy = e.clientY - ds.startY;
-              if (Math.hypot(dx, dy) > 8) {
-                ds.moved = true;
-              }
-              if (ds.moved && engineRef.current) {
-                const eng = engineRef.current;
-                const scale = eng.baseFitScale * eng.camZoom || 1;
-                const cr = Math.cos(-eng.camRot);
-                const sr = Math.sin(-eng.camRot);
-                const vx = -dx / scale;
-                const vy = -dy / scale;
-                const wdx = vx * cr - vy * sr;
-                const wdy = vx * sr + vy * cr;
-                panOffsetRef.current = {
-                  x: Math.max(-440, Math.min(440, ds.basePanX + wdx)),
-                  y: Math.max(-440, Math.min(440, ds.basePanY + wdy)),
-                };
-              }
-            }}
-            onPointerUp={() => {
-              dragStateRef.current.active = false;
-              window.setTimeout(() => {
-                dragStateRef.current.moved = false;
-              }, 40);
-            }}
-            onPointerCancel={() => {
-              dragStateRef.current.active = false;
+            }
+          }}
+          onPointerUp={() => {
+            dragStateRef.current.active = false;
+            window.setTimeout(() => {
               dragStateRef.current.moved = false;
-            }}
-            className="w-full h-full relative touch-none"
-          />
+            }, 40);
+          }}
+          onPointerCancel={() => {
+            dragStateRef.current.active = false;
+            dragStateRef.current.moved = false;
+          }}
+          className="w-full h-full relative touch-none"
+        />
 
-          {/* Live Interactive 32x32 Radar Minimap when Zoomed or Dynamic Camera Active */}
-          {showMinimap && (
-            <div className="hidden sm:block absolute top-2 left-2 z-10 pc-window p-0.5">
-              <canvas
-                ref={minimapCanvasRef}
-                width={90}
-                height={82}
-                title="Нажмите на карту для смещения фокуса камеры"
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const rx = (e.clientX - rect.left) / rect.width;
-                  const ry = (e.clientY - rect.top) / rect.height;
-                  const worldTapX = rx * WORLD_W;
-                  const worldTapY = ry * WORLD_H;
-                  const sel = propsRef.current.players.find(
-                    (pl) => pl.id === propsRef.current.selectedPlayerId
-                  );
-                  const baseFocus =
-                    presetRef.current === "close"
-                      ? sel
-                        ? cellCenter(sel.pos)
-                        : engineRef.current?.ballTarget ?? { x: WORLD_W / 2, y: WORLD_H / 2 }
-                      : { x: WORLD_W / 2, y: WORLD_H / 2 };
-                  panOffsetRef.current = {
-                    x: Math.max(-450, Math.min(450, worldTapX - baseFocus.x)),
-                    y: Math.max(-450, Math.min(450, worldTapY - baseFocus.y)),
-                  };
-                }}
-                className="block cursor-pointer"
-                style={{ imageRendering: "pixelated" }}
-              />
-            </div>
-          )}
+        {!crtEnabled && (
+          <div className="crt-scanlines absolute inset-0 pointer-events-none opacity-15" />
+        )}
+      </div>
 
-          {/* Camera Angle Switcher + Zoom & CRT Toolbar */}
-          <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 z-10 flex flex-wrap items-center justify-end gap-1 max-w-[96%]">
-            {/* Viewing Angle Presets */}
-            <div className="pc-window p-0.5 flex items-center gap-0.5">
-              <span className="hidden md:flex items-center gap-1 px-1.5 text-[10px] font-bold text-[#000080]">
-                <Camera className="w-3 h-3" />
-                <span>Ракурс:</span>
-              </span>
-              {CAMERA_PRESET_ORDER.map((preset) => {
-                const cfg = CAMERA_PRESET_META[preset];
-                const isAct = activePreset === preset;
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setCameraPreset(preset)}
-                    title={cfg.title}
-                    className={`h-6 px-1.5 sm:px-2 text-[10px] font-bold whitespace-nowrap cursor-pointer flex items-center gap-1 ${
-                      isAct ? "pc-btn-active" : "pc-btn"
-                    }`}
-                  >
-                    {preset === "opposite" && <Compass className="w-3 h-3 shrink-0" />}
-                    <span>{cfg.shortLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
+      {/* Camera Angle Switcher — Centered at Top below Win95 Menu Bar */}
+      {!props.hideHudWidgets && (
+        <div className="fixed top-[50px] left-1/2 -translate-x-1/2 z-20 flex flex-wrap items-center justify-center gap-1 max-w-[96vw]">
+          <div className="pc-window p-0.5 flex items-center gap-0.5">
+            <span className="hidden md:flex items-center gap-1 px-1.5 text-[10px] font-bold text-[#000080]">
+              <Camera className="w-3 h-3" />
+              <span>Ракурс:</span>
+            </span>
+            {CAMERA_PRESET_ORDER.map((preset) => {
+              const cfg = CAMERA_PRESET_META[preset];
+              const isAct = activePreset === preset;
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setCameraPreset(preset)}
+                  title={cfg.title}
+                  className={`h-6 px-1.5 sm:px-2 text-[10px] font-bold whitespace-nowrap cursor-pointer flex items-center gap-1 ${
+                    isAct ? "pc-btn-active" : "pc-btn"
+                  }`}
+                >
+                  {preset === "opposite" && <Compass className="w-3 h-3 shrink-0" />}
+                  <span>{cfg.shortLabel}</span>
+                </button>
+              );
+            })}
+          </div>
 
-            {/* Smooth Zoom -/+ & Center Reset */}
-            <div className="pc-window p-0.5 flex items-center gap-0.5">
-              <button
-                type="button"
-                onClick={() => setZoomOffset((z) => Math.max(-0.4, z - 0.25))}
-                title="Отдалить камеру"
-                className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
-              >
-                <ZoomOut className="w-3 h-3" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  panOffsetRef.current = { x: 0, y: 0 };
-                  setZoomOffset(0);
-                }}
-                title="Сбросить смещение и центрировать камеру (R)"
-                className="pc-btn h-6 px-1.5 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-              >
-                <LocateFixed className="w-3 h-3 text-[#000080]" />
-                <span className="hidden lg:inline">Центр</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomOffset((z) => Math.min(0.95, z + 0.25))}
-                title="Приблизить камеру"
-                className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
-              >
-                <ZoomIn className="w-3 h-3" />
-              </button>
-            </div>
-
+          <div className="pc-window p-0.5 flex items-center gap-0.5">
             <button
               type="button"
-              onClick={() => setCrtEnabled((v) => !v)}
-              title={crtEnabled ? "Отключить ЭЛТ-шейдер" : "Включить ЭЛТ-монитор 90-х"}
-              className={`h-7 px-2 text-[10px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer ${
-                crtEnabled ? "pc-btn-active" : "pc-btn"
-              }`}
+              onClick={() => setZoomOffset((z) => Math.max(-0.4, z - 0.25))}
+              title="Отдалить камеру"
+              className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
             >
-              <Monitor className="w-3 h-3" />
-              <span className="hidden sm:inline">ЭЛТ</span>
+              <ZoomOut className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                panOffsetRef.current = { x: 0, y: 0 };
+                setZoomOffset(0);
+              }}
+              title="Сбросить смещение и центрировать камеру (R)"
+              className="pc-btn h-6 px-1.5 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <LocateFixed className="w-3 h-3 text-[#000080]" />
+              <span className="hidden lg:inline">Центр</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoomOffset((z) => Math.min(0.95, z + 0.25))}
+              title="Приблизить камеру"
+              className="pc-btn h-6 w-6 flex items-center justify-center cursor-pointer"
+            >
+              <ZoomIn className="w-3 h-3" />
             </button>
           </div>
 
-          {!crtEnabled && (
-            <div className="crt-scanlines absolute inset-0 pointer-events-none opacity-20" />
-          )}
+          <button
+            type="button"
+            onClick={toggleCrt}
+            title={crtEnabled ? "Отключить ЭЛТ-шейдер" : "Включить ЭЛТ-монитор 90-х"}
+            className={`h-7 px-2 text-[10px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+              crtEnabled ? "pc-btn-active" : "pc-btn"
+            }`}
+          >
+            <Monitor className="w-3 h-3" />
+            <span className="hidden sm:inline">ЭЛТ</span>
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Bottom-Right Radar Minimap + Online Counter Badge (matching Screenshot 2) */}
+      {!props.hideHudWidgets && (
+        <div className="hidden sm:flex fixed bottom-2 right-2 z-20 flex-col items-stretch gap-1.5">
+          <div className="pc-window p-[3px]">
+            <canvas
+              ref={minimapCanvasRef}
+              width={142}
+              height={94}
+              title="Тактический радар поля — нажмите, чтобы сместить камеру"
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const rx = (e.clientX - rect.left) / rect.width;
+                const ry = (e.clientY - rect.top) / rect.height;
+                const worldTapX = rx * WORLD_W;
+                const worldTapY = ry * WORLD_H;
+                const sel = propsRef.current.players.find(
+                  (pl) => pl.id === propsRef.current.selectedPlayerId
+                );
+                const baseFocus =
+                  presetRef.current === "close"
+                    ? sel
+                      ? cellCenter(sel.pos)
+                      : engineRef.current?.ballTarget ?? { x: WORLD_W / 2, y: WORLD_H / 2 }
+                    : { x: WORLD_W / 2, y: WORLD_H / 2 };
+                panOffsetRef.current = {
+                  x: Math.max(-450, Math.min(450, worldTapX - baseFocus.x)),
+                  y: Math.max(-450, Math.min(450, worldTapY - baseFocus.y)),
+                };
+              }}
+              className="block cursor-pointer border border-black"
+              style={{ imageRendering: "pixelated" }}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => props.onOpenLobby?.()}
+            title="Открыть сетевое лобби и прямые трансляции"
+            className="pc-window p-[2px] cursor-pointer"
+          >
+            <div className="pc-inset-dark px-2.5 py-1 flex items-center justify-between gap-2 text-xs text-white font-bold">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black inline-block" />
+                <span>Онлайн: {onlineCount}</span>
+              </span>
+              <span className="flex items-end gap-[2px] h-3" aria-hidden="true">
+                <span className="w-1 h-1 bg-emerald-400" />
+                <span className="w-1 h-2 bg-emerald-400" />
+                <span className="w-1 h-2.5 bg-emerald-400" />
+                <span className="w-1 h-3 bg-emerald-400" />
+              </span>
+            </div>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

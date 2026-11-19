@@ -161,6 +161,7 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [showCoachHint, setShowCoachHint] = useState(true);
+  const [crtEnabled, setCrtEnabled] = useState(true);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => loadUserProfile());
   const [openWindows, setOpenWindows] = useState<DesktopWindowId[]>(() =>
@@ -1815,6 +1816,21 @@ export default function App() {
     setSelectedPlayerId(quickSwitchPlayers[nextIdx].id);
   }, [isHumanTurn, quickSwitchPlayers, selectedPlayerId]);
 
+  const handleSelectBestDefender = useCallback(() => {
+    if (!isHumanTurn) return;
+    const candidates = players
+      .filter((p) => p.team === currentTurn && p.role !== "GK")
+      .sort(
+        (a, b) =>
+          Math.hypot(a.pos.col - ball.pos.col, a.pos.row - ball.pos.row) -
+          Math.hypot(b.pos.col - ball.pos.col, b.pos.row - ball.pos.row)
+      );
+    if (candidates.length > 0) {
+      setSelectedPlayerId(candidates[0].id);
+      triggerCallout(candidates[0].pos, "ОТБОР!", 0x60a5fa);
+    }
+  }, [isHumanTurn, players, currentTurn, ball.pos, triggerCallout]);
+
   const handleAutoMove = useCallback(() => {
     if (!isHumanTurn) return;
     const best =
@@ -1927,6 +1943,11 @@ export default function App() {
         goalCelebrationTeam={phase === "GOAL_CELEBRATION" && goalBanner ? goalBanner.team : null}
         cameraPreset={cameraPreset}
         onChangeCameraPreset={setCameraPreset}
+        crtEnabled={crtEnabled}
+        onToggleCrt={() => setCrtEnabled((v) => !v)}
+        onlineCount={lobbyState.onlineUsers.length}
+        onOpenLobby={() => openWindow("lobby")}
+        hideHudWidgets={phase === "TITLE_MENU"}
         onSelectPlayer={handleSelectPlayer}
         onCellClick={handleCellClick}
         onPassToPlayer={handlePassToPlayer}
@@ -1946,6 +1967,12 @@ export default function App() {
         localTeam={localTeam}
         serverMatch={serverMatch}
         liveMatches={lobbyState.liveMatches}
+        players={players}
+        progression={progression}
+        matchStats={matchStats}
+        cameraPreset={cameraPreset}
+        crtEnabled={crtEnabled}
+        onlineCount={lobbyState.onlineUsers.length}
         blitzPace={blitzPace}
         aiPace={aiPace}
         pitchType={pitchType}
@@ -2020,8 +2047,15 @@ export default function App() {
         onToggleTts={handleToggleTts}
         onToggleAIPace={() => setAiPace((p) => (p === "normal" ? "fast" : "normal"))}
         onToggleCoachHint={() => setShowCoachHint((v) => !v)}
+        onToggleCrt={() => setCrtEnabled((v) => !v)}
+        onChangeCameraPreset={setCameraPreset}
         onChangeMentality={setMentality}
+        onChangeDifficulty={setDifficulty}
+        onChangeAiEngine={setAiEngine}
+        onChangeBlitzPace={setBlitzPace}
+        onChangeBlitzPref={setBlitzModePref}
         onSelectQuickPlayer={(id) => setSelectedPlayerId(id)}
+        onSelectBestDefender={handleSelectBestDefender}
         onCyclePlayer={handleCyclePlayer}
         onQuickPass={handleQuickPass}
         onQuickShot={handleQuickShot}
@@ -2118,6 +2152,7 @@ export default function App() {
       {openWindows.includes("squad") && (
         <SquadModal
           progression={progression}
+          players={players}
           zIndex={getWindowZ("squad")}
           isActive={activeWindowId === "squad"}
           isMinimized={minimizedWindows.includes("squad")}
@@ -2128,6 +2163,7 @@ export default function App() {
           onUpgradeStat={handleUpgradeStat}
           onUnlockAbility={handleUnlockAbility}
           onUpdateAppearance={handleUpdateAppearance}
+          onOpenTactics={() => openWindow("tactics")}
           onClose={() => closeWindow("squad")}
         />
       )}

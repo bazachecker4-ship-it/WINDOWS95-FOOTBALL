@@ -102,34 +102,34 @@ export function createPitchTexture(pitchType: PitchType): PIXI.Texture {
     ctx.stroke();
   };
 
-  // 1. Deep night stadium backdrop
+  // 1. Rich Stadium Sky & Upper Tier Roof Backdrop
   const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
-  bgGrad.addColorStop(0, "#050911");
-  bgGrad.addColorStop(0.5, "#0b1320");
-  bgGrad.addColorStop(1, "#04070d");
+  bgGrad.addColorStop(0, "#10203a");
+  bgGrad.addColorStop(0.28, "#0f172a");
+  bgGrad.addColorStop(1, "#070c14");
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // Subtle floodlight cone glow from 4 stadium corners
+  // Subtle floodlight cone glow from stadium roof
   const drawFloodlight = (lx: number, ly: number) => {
-    const rad = ctx.createRadialGradient(lx, ly, 4, lx, ly, 190);
-    rad.addColorStop(0, "rgba(224, 242, 254, 0.22)");
-    rad.addColorStop(0.5, "rgba(186, 230, 253, 0.06)");
+    const rad = ctx.createRadialGradient(lx, ly, 4, lx, ly, 210);
+    rad.addColorStop(0, "rgba(254, 249, 195, 0.28)");
+    rad.addColorStop(0.45, "rgba(186, 230, 253, 0.08)");
     rad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = rad;
     ctx.fillRect(0, 0, w, h);
   };
-  drawFloodlight(w * 0.16, h * 0.08);
-  drawFloodlight(w * 0.86, h * 0.12);
+  drawFloodlight(w * 0.22, h * 0.06);
+  drawFloodlight(w * 0.82, h * 0.08);
 
   // 2. Isometric Concrete Track Apron around the grass
-  const apronTL = gp(-1.8, -1.6, 0);
-  const apronTR = gp(PITCH_COLS + 1.8, -1.6, 0);
-  const apronBR = gp(PITCH_COLS + 1.8, PITCH_ROWS + 1.6, 0);
-  const apronBL = gp(-1.8, PITCH_ROWS + 1.6, 0);
+  const apronTL = gp(-2.2, -2.1, 0);
+  const apronTR = gp(PITCH_COLS + 2.2, -2.1, 0);
+  const apronBR = gp(PITCH_COLS + 2.2, PITCH_ROWS + 1.8, 0);
+  const apronBL = gp(-2.2, PITCH_ROWS + 1.8, 0);
 
-  // Extruded 3D Stadium Platform Slab thickness (bottom & right visible faces)
-  const slabDepth = 11;
+  // Extruded 3D Stadium Platform Slab thickness
+  const slabDepth = 12;
   fillPoly(
     [
       apronBL,
@@ -149,32 +149,70 @@ export function createPitchTexture(pitchType: PitchType): PIXI.Texture {
     "#0f172a"
   );
 
-  // Top apron track deck
-  fillPoly([apronTL, apronTR, apronBR, apronBL], "#172330");
-  strokePoly([apronTL, apronTR, apronBR, apronBL], "#334155", 1);
+  // Top apron track deck (subtle slate-blue track around sunlit turf)
+  fillPoly([apronTL, apronTR, apronBR, apronBL], "#1b2838");
+  strokePoly([apronTL, apronTR, apronBR, apronBL], "#475569", 1.1);
 
-  // 3. Top & Bottom Isometric Perimeter LED Ad Boards (3D Upright panels)
+  // 2b. Full Tiered Stadium Stands behind Top & Left/Right Upper Perimeter
+  const standBaseL = gp(-2.0, -0.85, 0);
+  const standBaseR = gp(PITCH_COLS + 2.0, -0.85, 0);
+  const standTopL = gp(-2.4, -3.9, 28);
+  const standTopR = gp(PITCH_COLS + 2.4, -3.9, 28);
+  fillPoly([standTopL, standTopR, standBaseR, standBaseL], "#1e293b");
+  strokePoly([standTopL, standTopR, standBaseR, standBaseL], "#475569", 1);
+
+  // Concrete Stair Aisles up the Bleachers
+  for (const aisleCol of [3, 10, 16, 22, 29]) {
+    const aBot = gp(aisleCol, -0.95, 2);
+    const aTop = gp(aisleCol, -3.7, 26);
+    strokePoly([aBot, aTop], "#475569", 1.6, false);
+  }
+
+  // Packed Colorful Pixel Crowd + Orange-Vest Stewards along Bleachers
+  const fanPalette = ["#ffffff", "#2563eb", "#ef4444", "#facc15", "#38bdf8", "#f97316", "#a855f7"];
+  for (let row = 0; row < 5; row++) {
+    const fr = -1.25 - row * 0.5;
+    const elev = 11 + row * 4.5;
+    for (let c = -1.2; c <= PITCH_COLS + 1.2; c += 0.45) {
+      const idx = Math.abs(Math.round(c * 13 + row * 31));
+      const fp = gp(c, fr, elev);
+      // Tiny shoulders & head pixel spectator
+      ctx.fillStyle = fanPalette[idx % fanPalette.length];
+      ctx.fillRect(Math.round(fp.x), Math.round(fp.y), 2.5, 2);
+      ctx.fillStyle = idx % 3 === 0 ? "#e2a87e" : "#f3c19d";
+      ctx.fillRect(Math.round(fp.x + 0.4), Math.round(fp.y - 1.5), 1.6, 1.5);
+    }
+  }
+  // Stewards in bright orange vests standing along perimeter track
+  for (const stCol of [2, 8.5, 16, 23.5, 30]) {
+    const sp = gp(stCol, -0.78, 0);
+    ctx.fillStyle = "#f97316";
+    ctx.fillRect(Math.round(sp.x - 1), Math.round(sp.y - 5), 2.5, 3);
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(Math.round(sp.x - 1), Math.round(sp.y - 2), 2.5, 2);
+  }
+
+  // 3. Top & Bottom Isometric Perimeter Ad Boards ("WIN 95", "FOOTBALL", "CHAMPIONS", "PLAY HARD")
   const drawIsoAds = (rowPos: number, heightElev: number) => {
     const ads = [
-      { bg: "#1e3a8a", fg: "#fef08a", txt: "FIFA BLITZ" },
-      { bg: "#991b1b", fg: "#ffffff", txt: "CHAMPIONS" },
-      { bg: "#14532d", fg: "#86efac", txt: "WIN 95 CUP" },
-      { bg: "#1e293b", fg: "#38bdf8", txt: "32×32 ARENA" },
-      { bg: "#7c2d12", fg: "#fde68a", txt: "TURBO" },
-      { bg: "#312e81", fg: "#f472b6", txt: "PRO LEAGUE" },
+      { bg: "#f8fafc", fg: "#000080", txt: "WIN 95" },
+      { bg: "#1e3a8a", fg: "#ffffff", txt: "FOOTBALL 95" },
+      { bg: "#1d4ed8", fg: "#fef08a", txt: "CHAMPIONS" },
+      { bg: "#0f172a", fg: "#ffffff", txt: "PLAY HARD" },
+      { bg: "#f8fafc", fg: "#dc2626", txt: "WIN 95" },
+      { bg: "#1e40af", fg: "#facc15", txt: "BLITZ CUP" },
     ];
     const span = PITCH_COLS / ads.length;
     ads.forEach((ad, idx) => {
-      const c0 = idx * span + 0.12;
-      const c1 = (idx + 1) * span - 0.12;
+      const c0 = idx * span + 0.08;
+      const c1 = (idx + 1) * span - 0.08;
       const b0 = gp(c0, rowPos, 0);
       const b1 = gp(c1, rowPos, 0);
       const t1 = gp(c1, rowPos, heightElev);
       const t0 = gp(c0, rowPos, heightElev);
       fillPoly([t0, t1, b1, b0], ad.bg);
-      strokePoly([t0, t1, b1, b0], "#38bdf8", 0.8);
+      strokePoly([t0, t1, b1, b0], "#94a3b8", 0.8);
 
-      // Slanted text along board
       const cx = (b0.x + b1.x) / 2;
       const cy = (b0.y + t0.y + b1.y + t1.y) / 4;
       ctx.save();
@@ -188,27 +226,17 @@ export function createPitchTexture(pitchType: PitchType): PIXI.Texture {
       ctx.restore();
     });
   };
-  drawIsoAds(-0.7, 13);
+  drawIsoAds(-0.62, 13);
 
-  // Crowd Bleachers behind Top Ad Boards (Pixel stadium spectators)
-  const fanPalette = ["#60a5fa", "#f87171", "#fde047", "#ffffff", "#4ade80", "#f472b6"];
-  for (let i = 0; i < 160; i++) {
-    const fc = (i * 0.2) % PITCH_COLS;
-    const fr = -1.1 - ((i % 3) * 0.28);
-    const fp = gp(fc, fr, 12 + (i % 3) * 3);
-    ctx.fillStyle = fanPalette[i % fanPalette.length];
-    ctx.fillRect(Math.round(fp.x), Math.round(fp.y), 2, 2);
-  }
-
-  // 4. Pitch Surface Palette
+  // 4. Pitch Surface Palette — Vivid Classic Sunlit Turf (matching Windows 95 Football!)
   const palette =
     pitchType === "ice"
-      ? { a: "#1b5978", b: "#216a8f", alt: "#1e6183", rim: "#0f3b52", speck: "#bae6fd", line: "#e0f2fe" }
+      ? { a: "#236c91", b: "#2a7ba3", alt: "#26749a", rim: "#123e54", speck: "#e0f2fe", line: "#f0f9ff" }
       : pitchType === "sand"
-      ? { a: "#aa803b", b: "#966d2f", alt: "#a07635", rim: "#6b4c1e", speck: "#fde68a", line: "#fef3c7" }
+      ? { a: "#b98e46", b: "#a47b37", alt: "#af853e", rim: "#6b4c1e", speck: "#fde68a", line: "#fffbeb" }
       : pitchType === "obstacles"
-      ? { a: "#195744", b: "#134536", alt: "#164e3d", rim: "#0c2d23", speck: "#6ee7b7", line: "#e2e8f0" }
-      : { a: "#1f7d43", b: "#166233", alt: "#1a6f3b", rim: "#0e4322", speck: "#86efac", line: "#f8fafc" };
+      ? { a: "#268452", b: "#1e6e44", alt: "#22794b", rim: "#0f3d25", speck: "#86efac", line: "#f8fafc" }
+      : { a: "#3cb436", b: "#2c9528", alt: "#34a530", rim: "#175e15", speck: "#bbf7d0", line: "#ffffff" };
 
   // 3D Turf Lip along visible bottom & right outer edges
   const turfBL = gp(0, PITCH_ROWS, 0);
@@ -224,17 +252,16 @@ export function createPitchTexture(pitchType: PitchType): PIXI.Texture {
     palette.rim
   );
 
-  // 5. Isometric Mowing Stripes & Diamond Turf Cells (32x32)
+  // 5. Crisp Sunlit Isometric Mowing Stripes & 32x32 Grid
   for (let c = 0; c < PITCH_COLS; c++) {
     const bandEven = Math.floor(c / 2) % 2 === 0;
     for (let r = 0; r < PITCH_ROWS; r++) {
-      const rowEven = Math.floor(r / 2) % 2 === 0;
       const diagCheck = (c + r) % 2 === 0;
       const colFill = bandEven
         ? diagCheck
           ? palette.a
           : palette.alt
-        : rowEven
+        : diagCheck
         ? palette.alt
         : palette.b;
 
@@ -246,12 +273,12 @@ export function createPitchTexture(pitchType: PitchType): PIXI.Texture {
     }
   }
 
-  // Floodlight Soft Vignette over the Pitch
+  // Sunlit Center Spotlight & Gentle Edge Depth
   const centerPt = gp(PITCH_COLS / 2, PITCH_ROWS / 2);
-  const pitchGrad = ctx.createRadialGradient(centerPt.x, centerPt.y, 18, centerPt.x, centerPt.y, w * 0.48);
-  pitchGrad.addColorStop(0, "rgba(255,255,255,0.12)");
-  pitchGrad.addColorStop(0.65, "rgba(0,0,0,0)");
-  pitchGrad.addColorStop(1, "rgba(0,0,0,0.34)");
+  const pitchGrad = ctx.createRadialGradient(centerPt.x, centerPt.y, 24, centerPt.x, centerPt.y, w * 0.5);
+  pitchGrad.addColorStop(0, "rgba(255,255,255,0.14)");
+  pitchGrad.addColorStop(0.68, "rgba(0,0,0,0)");
+  pitchGrad.addColorStop(1, "rgba(0,0,0,0.22)");
   const turfTL = gp(0, 0);
   ctx.save();
   ctx.beginPath();
@@ -616,22 +643,26 @@ function drawFootballerFrame(
   const baseJersey =
     team === "red"
       ? isGK
-        ? "#9333ea"
+        ? "#16a34a"
         : "#dc2626"
       : isGK
-      ? "#eab308"
-      : appearance
+      ? "#16a34a"
+      : appearance && appearance.jerseyTheme !== "classic_blue"
       ? JERSEY_THEME_STYLES[appearance.jerseyTheme].swatch
-      : "#2563eb";
+      : "#f8fafc";
 
-  const jerseyDark = darkenHex(baseJersey, 0.68);
-  const jerseyLight = lightenHex(baseJersey, 46);
+  const jerseyDark = darkenHex(baseJersey, 0.72);
+  const jerseyLight = lightenHex(baseJersey, 36);
   const shortsCol =
-    team === "red" ? (isGK ? "#1e1b4b" : "#111827") : isGK ? "#0f172a" : "#f8fafc";
+    team === "red" ? (isGK ? "#052e16" : "#1e3a8a") : isGK ? "#052e16" : "#f1f5f9";
   const shortsShade = darkenHex(shortsCol, 0.76);
-  const sockCol = baseJersey;
+  const sockCol = team === "blue" && !isGK ? "#2563eb" : team === "red" && !isGK ? "#1e3a8a" : baseJersey;
   const pattern: JerseyPattern =
-    team === "blue" && appearance ? appearance.jerseyPattern : "solid";
+    team === "blue" && appearance
+      ? appearance.jerseyPattern
+      : team === "red" && !isGK
+      ? "stripes"
+      : "solid";
   const hair: HairStyle =
     team === "blue" && appearance ? appearance.hairStyle : "classic";
 

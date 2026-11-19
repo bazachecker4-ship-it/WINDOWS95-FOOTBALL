@@ -8,13 +8,14 @@ import {
 } from "../types/game";
 import { LobbySnapshotState, mpClient } from "../services/multiplayerClient";
 import {
+  ArrowLeft,
   Bot,
   Eye,
   Globe,
   Loader2,
   MessageSquare,
   Play,
-  PlusCircle,
+  Plus,
   Radio,
   Search,
   Send,
@@ -117,15 +118,15 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
 
   return (
     <Win95Window
-      title="NET_LOBBY_95.EXE — Сеть, Поиск Игры и Эфир"
+      title="Онлайн"
       icon={<Globe className="w-3.5 h-3.5 text-sky-200 shrink-0" />}
-      ariaLabel="Сетевое лобби и наблюдение"
+      ariaLabel="Онлайн лобби и трансляции"
       zIndex={zIndex}
       isActive={isActive}
       isMinimized={isMinimized}
       cascadeIndex={cascadeIndex}
       topBoundary={topBoundary}
-      defaultWidth={720}
+      defaultWidth={740}
       defaultHeight={590}
       minWidth={320}
       minHeight={380}
@@ -135,18 +136,29 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
       statusBarPanes={[
         {
           text: lobbyState.connected
-            ? `Сервер: ONLINE (WS) · В сети: ${lobbyState.onlineUsers.length}`
+            ? `Сервер: ONLINE (WS) · Игроков в сети: ${lobbyState.onlineUsers.length}`
             : lobbyState.reconnecting
             ? "Переподключение к серверу..."
             : "Подключение к серверу...",
           flex: true,
         },
         { text: `Клуб: ${clubName}` },
-        { text: `Матчей LIVE: ${lobbyState.liveMatches.length}` },
+        { text: `Эфиров: ${lobbyState.liveMatches.length}` },
       ]}
     >
       {/* Classic Win95 Property Sheet Tabs */}
       <div className="px-2.5 pt-2 bg-[#c0c0c0] flex items-end gap-0.5 border-b border-white shrink-0 overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setTab("rooms")}
+          className={`px-3 py-1.5 text-xs flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            tab === "rooms" ? "win95-tab-active" : "win95-tab"
+          }`}
+        >
+          <Users className="w-3.5 h-3.5 text-[#000080]" />
+          <span>Онлайн и Комнаты ({lobbyState.onlineUsers.length})</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setTab("spectate")}
@@ -156,17 +168,6 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
         >
           <Eye className="w-3.5 h-3.5 text-red-700" />
           <span>Прямой эфир ({lobbyState.liveMatches.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setTab("rooms")}
-          className={`px-3 py-1.5 text-xs flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-            tab === "rooms" ? "win95-tab-active" : "win95-tab"
-          }`}
-        >
-          <Users className="w-3.5 h-3.5 text-[#000080]" />
-          <span>Комнаты PvP ({lobbyState.rooms.length})</span>
         </button>
 
         <button
@@ -332,9 +333,61 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
           </div>
         )}
 
-        {/* TAB 2: MULTIPLAYER ROOMS (Real WebSocket Rooms) */}
+        {/* TAB 2: MULTIPLAYER ONLINE ROSTER + SERVER ROOMS */}
         {tab === "rooms" && (
           <div className="space-y-3">
+            {/* Classic Screenshot 1 Online Users Table */}
+            <div className="pc-field overflow-hidden">
+              <div className="grid grid-cols-[1.4fr_80px_100px] px-2.5 py-1.5 bg-[#dfdfdf] border-b border-[#808080] text-[11px] font-bold text-slate-900">
+                <span>Игрок / Клуб</span>
+                <span className="text-center">Рейтинг</span>
+                <span className="text-right">Статус</span>
+              </div>
+              <div className="max-h-[155px] overflow-y-auto divide-y divide-slate-200">
+                {lobbyState.onlineUsers.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-slate-600 text-xs">
+                    {lobbyState.connected
+                      ? "Ожидаем список игроков онлайн..."
+                      : "Подключение к серверу мультиплеера..."}
+                  </div>
+                ) : (
+                  lobbyState.onlineUsers.map((u, idx) => {
+                    const isSelf = u.clientId === lobbyState.clientId;
+                    const inMatch = lobbyState.liveMatches.some(
+                      (m) =>
+                        m.status !== "finished" &&
+                        (m.hostName.includes(u.clubName) || m.guestName.includes(u.clubName))
+                    );
+                    const estRating = 1245 - idx * 24 + (isSelf ? 15 : 0);
+                    return (
+                      <div
+                        key={u.clientId}
+                        className={`grid grid-cols-[1.4fr_80px_100px] px-2.5 py-1.5 text-xs items-center ${
+                          isSelf ? "bg-[#000080] text-white font-bold" : "bg-white text-black"
+                        }`}
+                      >
+                        <span className="truncate">
+                          {u.managerName} · {u.clubName}
+                          {isSelf ? " (Вы)" : ""}
+                        </span>
+                        <span className="text-center font-mono tabular-nums font-bold">
+                          {estRating}
+                        </span>
+                        <span className="flex items-center justify-end gap-1.5 text-[11px] font-bold">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full border border-black inline-block ${
+                              inMatch ? "bg-amber-500" : "bg-emerald-500"
+                            }`}
+                          />
+                          <span>{inMatch ? "В игре" : "В сети"}</span>
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
             {lobbyState.waitingRoom ? (
               <fieldset className="win95-groupbox space-y-2.5">
                 <legend>Ваша активная комната ожидания</legend>
@@ -371,7 +424,7 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
                 </div>
               </fieldset>
             ) : (
-              <fieldset className="win95-groupbox space-y-2.5">
+              <fieldset className="win95-groupbox space-y-2">
                 <legend>Создать новую PvP комнату на сервере</legend>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div className="sm:col-span-2">
@@ -380,7 +433,7 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
                       type="text"
                       value={roomNameInput}
                       onChange={(e) => setRoomNameInput(e.target.value)}
-                      className="pc-field w-full px-2 py-1.5 text-xs focus:outline-none"
+                      className="pc-field w-full px-2 py-1 text-xs focus:outline-none"
                     />
                   </div>
                   <div>
@@ -388,7 +441,7 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
                     <select
                       value={selectedPitch}
                       onChange={(e) => setSelectedPitch(e.target.value as PitchType)}
-                      className="pc-field w-full px-2 py-1.5 text-xs focus:outline-none"
+                      className="pc-field w-full px-2 py-1 text-xs focus:outline-none"
                     >
                       <option value="turf">Газон 32×32</option>
                       <option value="ice">Скользкий лёд</option>
@@ -425,41 +478,26 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
                     </select>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    {onOpenChallenge && (
-                      <button
-                        type="button"
-                        onClick={onOpenChallenge}
-                        className="pc-btn px-2.5 py-1.5 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                      >
-                        <Share2 className="w-3.5 h-3.5 text-[#000080]" />
-                        <span>Вызов / QR</span>
-                      </button>
-                    )}
+                  {onOpenChallenge && (
                     <button
                       type="button"
-                      disabled={!lobbyState.connected}
-                      onClick={handleCreateRoom}
-                      className={`px-3.5 py-1.5 text-xs font-bold flex items-center gap-1.5 ${
-                        lobbyState.connected
-                          ? "pc-btn-primary cursor-pointer"
-                          : "pc-btn opacity-50 cursor-not-allowed"
-                      }`}
+                      onClick={onOpenChallenge}
+                      className="pc-btn px-2.5 py-1 text-xs font-bold flex items-center gap-1 cursor-pointer"
                     >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      <span>Создать комнату</span>
+                      <Share2 className="w-3.5 h-3.5 text-[#000080]" />
+                      <span>Вызов / QR</span>
                     </button>
-                  </div>
+                  )}
                 </div>
               </fieldset>
             )}
 
             <fieldset className="win95-groupbox space-y-2">
               <legend>Открытые серверные комнаты ({lobbyState.rooms.length})</legend>
-              <div className="pc-field p-1 space-y-0.5 min-h-[120px]">
+              <div className="pc-field p-1 space-y-0.5 min-h-[100px]">
                 {lobbyState.rooms.length === 0 ? (
-                  <div className="py-6 text-center text-slate-600 text-xs">
-                    Нет открытых комнат ожидания — создайте свою комнату или пригласите друга по QR/ссылке!
+                  <div className="py-5 text-center text-slate-600 text-xs">
+                    Нет открытых комнат ожидания — нажмите «Создать комнату» или «Присоединиться»!
                   </div>
                 ) : (
                   lobbyState.rooms.map((room) => {
@@ -469,7 +507,7 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
                       <div
                         key={room.id}
                         onClick={() => setSelectedRoomId(room.id)}
-                        className={`px-2.5 py-2 flex items-center justify-between gap-2 cursor-pointer ${
+                        className={`px-2.5 py-1.5 flex items-center justify-between gap-2 cursor-pointer ${
                           isSel ? "bg-[#000080] text-white" : "hover:bg-slate-200 text-black"
                         }`}
                       >
@@ -681,13 +719,57 @@ export const MultiplayerLobbyModal: React.FC<MultiplayerLobbyModalProps> = ({
           </div>
         )}
 
-        <div className="flex items-center justify-end pt-1">
+        {/* Bottom Screenshot 1 Action Bar: + Создать комнату | ▶ Присоединиться | ◀ Назад */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1.5 border-t border-[#808080]">
+          <button
+            type="button"
+            disabled={!lobbyState.connected || Boolean(lobbyState.waitingRoom)}
+            onClick={() => {
+              setTab("rooms");
+              handleCreateRoom();
+            }}
+            className={`py-2 px-3 text-xs font-bold flex items-center justify-center gap-1.5 ${
+              lobbyState.connected && !lobbyState.waitingRoom
+                ? "pc-btn cursor-pointer"
+                : "pc-btn opacity-60 cursor-not-allowed"
+            }`}
+          >
+            <Plus className="w-4 h-4 text-emerald-700" />
+            <span>Создать комнату</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const joinable = lobbyState.rooms.find(
+                (r) =>
+                  r.hostClientId !== lobbyState.clientId &&
+                  (!selectedRoomId || r.id === selectedRoomId)
+              );
+              if (joinable) {
+                mpClient.joinRoom(joinable.id);
+              } else if (filteredLiveMatches.length > 0) {
+                onSpectateMatch(filteredLiveMatches[0]);
+              } else {
+                setTab("matchmaking");
+                if (lobbyState.connected && !lobbyState.inQueue) {
+                  mpClient.joinQueue(selectedPitch, selectedPace, selectedBlitzPref);
+                }
+              }
+            }}
+            className="pc-btn-primary py-2 px-3 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5" />
+            <span>Присоединиться</span>
+          </button>
+
           <button
             type="button"
             onClick={onClose}
-            className="pc-btn px-5 py-1.5 text-xs font-bold cursor-pointer"
+            className="pc-btn py-2 px-3 text-xs font-bold flex items-center justify-center gap-1.5 text-red-900 cursor-pointer"
           >
-            Закрыть
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Назад</span>
           </button>
         </div>
       </div>

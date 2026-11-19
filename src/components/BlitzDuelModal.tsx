@@ -291,46 +291,70 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/55 p-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Блиц-дуэль за мяч"
     >
-      <div className="w-full max-w-md pc-window p-1">
-        {/* Classic Old-PC Window Title Bar */}
-        <div className="pc-titlebar px-2.5 py-1.5 flex items-center justify-between gap-3">
-          <span className="font-display text-base font-bold tracking-wide truncate flex items-center gap-1.5">
+      <div className="w-full max-w-lg pc-window p-[3px]">
+        {/* Classic Win95 Title Bar */}
+        <div className="pc-titlebar px-2.5 py-1 flex items-center justify-between gap-3">
+          <span className="font-display text-sm sm:text-base font-bold tracking-wide truncate flex items-center gap-1.5">
             {isServerDriven && <Globe className="w-3.5 h-3.5 text-sky-300 shrink-0" />}
-            <span>BLITZ_DUEL.EXE — {variantName}</span>
+            <span>
+              {duel.isShotDuel ? "Пенальти! — " : "Блиц-стык! — "}
+              {variantName}
+            </span>
           </span>
           {currentTurnLimitMs !== null && (
             <span
-              className={`font-mono text-xs font-bold tabular-nums px-1.5 py-0.5 bg-black/40 ${
+              className={`font-mono text-xs font-bold tabular-nums px-1.5 py-0.5 bg-black/50 border border-white/30 ${
                 timeLeftMs < 1100 ? "text-red-300" : "text-emerald-300"
               }`}
             >
-              {(timeLeftMs / 1000).toFixed(1)}с
+              Время: {(timeLeftMs / 1000).toFixed(1)}с
             </span>
           )}
         </div>
 
-        <div className="p-3.5 space-y-3">
-          <div>
-            <p className="text-xs text-slate-900 leading-snug font-medium">{variantDesc}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-700">
-              <span className="font-bold">Условия:</span>
-              {reasons.map((reason, idx) => (
-                <React.Fragment key={reason}>
-                  {idx > 0 && <span aria-hidden="true">·</span>}
-                  <span>{reason}</span>
-                </React.Fragment>
-              ))}
+        <div className="p-3 space-y-2.5 bg-[#c0c0c0]">
+          {/* Retro Stadium Penalty/Duel Banner (matching Screenshot 1 Пенальти artwork) */}
+          <div className="pc-inset relative h-20 overflow-hidden bg-[#1e3a8a] flex items-end justify-between px-3">
+            <svg
+              viewBox="0 0 300 72"
+              preserveAspectRatio="xMidYMid slice"
+              shapeRendering="crispEdges"
+              className="absolute inset-0 w-full h-full"
+              aria-hidden="true"
+            >
+              <rect width="300" height="24" fill="#1e293b" />
+              <rect y="22" width="300" height="6" fill="#1e3a8a" />
+              <rect y="28" width="300" height="44" fill="#2e9e2b" />
+              <rect y="28" width="300" height="10" fill="#37b233" />
+              <rect y="48" width="300" height="12" fill="#37b233" />
+              {/* Goal Frame */}
+              <rect x="86" y="10" width="128" height="28" fill="#0f172a" opacity="0.45" />
+              <rect x="84" y="8" width="132" height="3" fill="#ffffff" />
+              <rect x="84" y="8" width="3" height="30" fill="#ffffff" />
+              <rect x="213" y="8" width="3" height="30" fill="#ffffff" />
+              {/* Green Keeper */}
+              <rect x="145" y="19" width="10" height="14" fill="#16a34a" />
+              <rect x="147" y="14" width="6" height="5" fill="#f3c19d" />
+              {/* Penalty Spot & White/Red Striker */}
+              <rect x="148" y="54" width="4" height="2" fill="#ffffff" />
+              <rect x="147" y="47" width="6" height="6" fill="#ffffff" />
+            </svg>
+            <div className="relative z-10 bg-black/70 border border-slate-400 px-2 py-0.5 text-[10px] font-bold text-white mb-1">
+              {variantDesc}
+            </div>
+            <div className="relative z-10 bg-[#000080]/90 border border-white/60 px-2 py-0.5 text-[10px] font-bold text-amber-300 mb-1 hidden sm:block">
+              {reasons[0] || `${size}×${size}`}
             </div>
           </div>
 
           {/* Segmented Win95 Timer Bar */}
           {currentTurnLimitMs !== null && (
-            <div className="pc-field p-[2px] h-4 w-full">
+            <div className="pc-field p-[2px] h-3.5 w-full">
               <div
                 className={`h-full transition-[width] duration-75 ${
                   timeLeftMs < 1100 ? "bg-red-700" : "win95-progress-fill"
