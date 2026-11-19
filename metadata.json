@@ -1,0 +1,6 @@
+{
+  "name": "Блиц-Футбол",
+  "description": "Тактический онлайн-футбол с шахматными ролями игроков, блиц-дуэлями в крестики-нолики, ИИ-тренером и живым комментатором.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
