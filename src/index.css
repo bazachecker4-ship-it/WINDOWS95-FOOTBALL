@@ -303,3 +303,24 @@
     transparent 3px
   );
 }
+
+@keyframes crtFlicker {
+  0% { opacity: 0.94; }
+  50% { opacity: 0.99; }
+  100% { opacity: 0.95; }
+}
+
+.crt-animated-overlay {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.18) 50%
+  ), repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 200, 100, 0.02) 3px
+  );
+  background-size: 100% 4px, 100% 100%;
+  animation: crtFlicker 0.25s infinite;
+  pointer-events: none;
+}

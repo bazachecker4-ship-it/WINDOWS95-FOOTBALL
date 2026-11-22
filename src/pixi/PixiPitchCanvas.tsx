@@ -1620,7 +1620,9 @@ export const PixiPitchCanvas: React.FC<PixiPitchCanvasProps> = (props) => {
           className="w-full h-full relative touch-none"
         />
 
-        {!crtEnabled && (
+        {crtEnabled ? (
+          <div className="crt-animated-overlay absolute inset-0 z-10" />
+        ) : (
           <div className="crt-scanlines absolute inset-0 pointer-events-none opacity-15" />
         )}
       </div>

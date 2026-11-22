@@ -35,6 +35,7 @@ import {
   PixelPlayerPortrait,
   PixelTrophyIllustration,
 } from "./Win95Art";
+import { PlayerActionPopover } from "./PlayerActionPopover";
 import {
   ArrowLeft,
   BarChart3,
@@ -169,6 +170,11 @@ interface OverlayHUDProps {
   onSendSpectateReaction?: (text: string) => void;
   onResignOnlineMatch?: () => void;
   userProfile: UserProfile;
+  actionPoints: number;
+  maxActionPoints: number;
+  turnTimeLeft: number;
+  showActionPopover: boolean;
+  onToggleActionPopover: (show: boolean) => void;
 }
 
 const DIFFICULTY_LABELS: Record<AIDifficulty, string> = {
@@ -393,6 +399,11 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
   onSendSpectateReaction,
   onResignOnlineMatch,
   userProfile,
+  actionPoints,
+  maxActionPoints,
+  turnTimeLeft,
+  showActionPopover,
+  onToggleActionPopover,
 }) => {
   const [startMenuOpen, setStartMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -439,9 +450,9 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
   const settingsOpen = openWindows.includes("settings");
 
   const activePlayerCard =
-    selectedPlayer ??
-    (ballCarrierId ? players.find((p) => p.id === ballCarrierId) ?? null : null) ??
-    players.find((p) => p.team === "blue" && p.role === "MID") ??
+    selectedPlayer ||
+    (ballCarrierId ? players.find((p) => p.id === ballCarrierId) : undefined) ||
+    players.find((p) => p.team === "blue" && p.role === "MID") ||
     null;
 
   const activeStats = activePlayerCard
@@ -1626,17 +1637,17 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                         setupAiEngine
                       )
                     }
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer"
+                    className="pc-btn-primary py-3 px-3.5 flex items-center gap-3 text-left cursor-pointer shadow-md"
                   >
-                    <SoccerBallIcon className="w-7 h-7 shrink-0" />
+                    <SoccerBallIcon className="w-8 h-8 shrink-0 text-amber-300" />
                     <div className="min-w-0">
-                      <div className="font-display text-lg font-bold leading-none text-black">
+                      <div className="font-display text-xl font-bold leading-none text-white tracking-wide">
                         Новый матч
                       </div>
-                      <div className="text-[10px] text-slate-700 mt-0.5 truncate">
+                      <div className="text-[11px] text-emerald-200 mt-1 truncate">
                         {setupMode === "ai"
-                          ? `${setupAiEngine === "groq" ? "Groq ИИ" : "ИИ 95"} · ${PITCH_META[setupPitch].name}`
-                          : `2 игрока · ${PITCH_META[setupPitch].name}`}
+                          ? `${setupAiEngine === "groq" ? "Groq ИИ-Агент" : "ИИ 95"} · ${PITCH_META[setupPitch].name}`
+                        : `2 игрока · ${PITCH_META[setupPitch].name}`}
                       </div>
                     </div>
                   </button>
@@ -1644,7 +1655,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenWindow("tournaments")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer"
+                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
                   >
                     <Trophy className="w-7 h-7 text-amber-600 shrink-0" />
                     <div className="font-display text-lg font-bold leading-none text-black">
@@ -1655,7 +1666,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenWindow("lobby")}
-                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer"
+                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-[#d8d8d8]"
                   >
                     <span className="flex items-center gap-3">
                       <Globe className="w-7 h-7 text-sky-700 shrink-0" />
@@ -1671,7 +1682,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenWindow("squad")}
-                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer"
+                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-[#d8d8d8]"
                   >
                     <span className="flex items-center gap-3">
                       <Users className="w-7 h-7 text-emerald-700 shrink-0" />
@@ -1680,8 +1691,8 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                       </span>
                     </span>
                     {skillPoints > 0 && (
-                      <span className="font-mono text-[11px] font-bold text-[#000080]">
-                        +{skillPoints}
+                      <span className="font-mono text-[11px] font-bold text-amber-900 bg-amber-300 px-1 border border-black">
+                        +{skillPoints} очков
                       </span>
                     )}
                   </button>
@@ -1689,7 +1700,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenWindow("settings")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer"
+                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
                   >
                     <Settings className="w-7 h-7 text-slate-700 shrink-0" />
                     <div className="font-display text-lg font-bold leading-none text-black">
@@ -1700,7 +1711,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onCloseWindow("setup")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer"
+                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
                   >
                     <LogOut className="w-7 h-7 text-red-800 shrink-0" />
                     <div className="font-display text-lg font-bold leading-none text-black">
@@ -2699,6 +2710,28 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
             </div>
           </div>
         </Win95Window>
+      )}
+
+      {showActionPopover && selectedPlayer && isHumanTurn && (
+        <PlayerActionPopover
+          player={selectedPlayer}
+          progression={progression}
+          hasBall={ballCarrierId === selectedPlayer.id}
+          actionPoints={actionPoints}
+          maxActionPoints={maxActionPoints}
+          turnTimeLeft={turnTimeLeft}
+          maxTurnTime={20}
+          onClose={() => onToggleActionPopover(false)}
+          onActionClick={(action) => {
+            onToggleActionPopover(false);
+            if (action === "pass") onQuickPass();
+            else if (action === "shoot") onQuickShot();
+            else if (action === "move") onAutoMove();
+            else onAutoMove();
+          }}
+          canPass={canQuickPass}
+          canShoot={canQuickShot}
+        />
       )}
     </>
   );

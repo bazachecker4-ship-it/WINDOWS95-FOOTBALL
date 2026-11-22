@@ -647,7 +647,7 @@ function drawFootballerFrame(
         : "#dc2626"
       : isGK
       ? "#16a34a"
-      : appearance && appearance.jerseyTheme !== "classic_blue"
+      : appearance
       ? JERSEY_THEME_STYLES[appearance.jerseyTheme].swatch
       : "#f8fafc";
 

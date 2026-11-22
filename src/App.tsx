@@ -250,6 +250,8 @@ export default function App() {
     return () => unsubLobby();
   }, []);
 
+
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -373,6 +375,10 @@ export default function App() {
   const [momentum, setMomentum] = useState(0);
   const [comboStreak, setComboStreak] = useState(0);
   const [superDriveReady, setSuperDriveReady] = useState(false);
+  const [actionPoints, setActionPoints] = useState(6);
+  const [maxActionPoints, setMaxActionPoints] = useState(6);
+  const [turnTimeLeft, setTurnTimeLeft] = useState(20);
+  const [showActionPopover, setShowActionPopover] = useState(false);
   const [ballFlight, setBallFlight] = useState<BallFlightEvent | null>(null);
   const [floatingCallout, setFloatingCallout] = useState<FloatingCallout | null>(null);
   const [broadcastBanner, setBroadcastBanner] = useState<{
@@ -393,6 +399,21 @@ export default function App() {
   useEffect(() => {
     saveSquadProgression(progression);
   }, [progression]);
+
+  useEffect(() => {
+    if (phase !== "PLAYING") return;
+    setTurnTimeLeft(20);
+    setActionPoints(6);
+    setMaxActionPoints(6);
+    setShowActionPopover(false);
+    const timer = window.setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) return 0;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [currentTurn, turnCount, phase]);
 
   const clearTimers = () => {
     if (goalTimerRef.current !== null) {
@@ -1688,6 +1709,26 @@ export default function App() {
     advanceTurnOrEndMatch,
   ]);
 
+  const tryEnterFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      // Ignored in restricted sandbox iframes
+    }
+  };
+
+  useEffect(() => {
+    const handleOrientationOrResize = () => {
+      tryEnterFullscreen();
+    };
+    window.addEventListener("orientationchange", handleOrientationOrResize);
+    return () => {
+      window.removeEventListener("orientationchange", handleOrientationOrResize);
+    };
+  }, []);
+
   const startNewMatch = useCallback(
     (
       mode: GameMode,
@@ -1700,6 +1741,7 @@ export default function App() {
       localDerby = false
     ) => {
       clearTimers();
+      tryEnterFullscreen();
       if (humanAiLiveIdRef.current) {
         mpClient.unpublishLiveMatch(humanAiLiveIdRef.current);
         humanAiLiveIdRef.current = null;
@@ -1777,7 +1819,12 @@ export default function App() {
 
   const handleSelectPlayer = (playerId: string) => {
     if (!isHumanTurn) return;
-    setSelectedPlayerId((prev) => (prev === playerId ? null : playerId));
+    if (selectedPlayerId === playerId) {
+      setShowActionPopover((prev) => !prev);
+    } else {
+      setSelectedPlayerId(playerId);
+      setShowActionPopover(true);
+    }
   };
 
   const handleCellClick = (pos: Position) => {
@@ -2001,6 +2048,11 @@ export default function App() {
         isCommentaryLoading={isCommentaryLoading}
         goalBanner={goalBanner}
         winner={winner}
+        actionPoints={actionPoints}
+        maxActionPoints={maxActionPoints}
+        turnTimeLeft={turnTimeLeft}
+        showActionPopover={showActionPopover}
+        onToggleActionPopover={setShowActionPopover}
         openWindows={openWindows}
         minimizedWindows={minimizedWindows}
         activeWindowId={activeWindowId}
