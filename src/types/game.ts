@@ -12,6 +12,8 @@ export type AIPace = "normal" | "fast";
 export type PitchType = "turf" | "ice" | "sand" | "obstacles";
 
 export type TacticalMentality = "defend" | "balance" | "attack";
+export type FormationId = "4-3-3" | "4-4-2" | "3-5-2";
+export type PlayerActionMode = "move" | "pass" | "shoot" | "tackle";
 
 export type BlitzVariant = "classic" | "decay" | "blocked" | "grand";
 export type BlitzModePreference = "dynamic" | BlitzVariant;
@@ -113,20 +115,42 @@ export interface SquadProgressionState {
   roles: Record<PlayerRole, RoleProgression>;
 }
 
+export interface MatchMistakeEvent {
+  id: string;
+  turn: number;
+  playerLabel: string;
+  type: "timeout" | "blitz_timeout" | "blitz_lost" | "offside" | "fatigue";
+  detail: string;
+}
+
 export interface MatchStats {
   moves: number;
   passes: number;
   shots: number;
+  offsides: number;
+  turnTimeouts: number;
   blitzPlayed: number;
   blitzWon: number;
   blitzTimeouts: number;
   roleMoves: Record<PlayerRole, number>;
 }
 
+export interface CoachMistakeItem {
+  player: string;
+  issue: string;
+  fix: string;
+}
+
 export interface CoachAnalysis {
   styleSummary: string;
   tacticalAdvice: string[];
   upgradeRecommendation: string;
+  isHalftime?: boolean;
+  mistakeReport?: {
+    overview: string;
+    playerErrors: CoachMistakeItem[];
+    secondHalfPlan: string;
+  };
   source: "gemini" | "groq" | "local";
 }
 
@@ -148,12 +172,17 @@ export interface MoveOption {
   opponentId?: string;
   complexity?: BlitzComplexity;
   isSlide?: boolean;
+  apCost?: number;
 }
 
 export interface PassOption {
   targetPlayerId: string;
   pos: Position;
   isLob?: boolean;
+  isOffside?: boolean;
+  isKeyPass?: boolean;
+  interceptionRisk?: "safe" | "tight";
+  apCost?: number;
 }
 
 export interface ShotOption {
@@ -161,6 +190,16 @@ export interface ShotOption {
   isContested: boolean;
   defenderId?: string;
   complexity?: BlitzComplexity;
+  apCost?: number;
+}
+
+export type PressureLevel = "free" | "marked" | "forward_blocked" | "retreat_only";
+
+export interface TacticalPressureState {
+  level: PressureLevel;
+  frontBlockers: number;
+  adjacentEnemies: number;
+  reason: string;
 }
 
 export interface TacticalHint {
@@ -213,37 +252,37 @@ export const ROLE_META: Record<PlayerRole, RoleMeta> = {
   GK: {
     code: "ВР",
     name: "Вратарь",
-    chessName: "Король",
-    moveSummary: "До 3 клеток в любом направлении в зоне ворот. Усложняет блиц-дуэль в штрафной.",
-    rangeLabel: "До 3 клеток (8 напр.)",
+    chessName: "Страж ворот",
+    moveSummary: "Маневрирует до 3.5 кл. в штрафной на 360° и перекрывает углы обстрела.",
+    rangeLabel: "360° до 3.5 кл. (штрафная)",
   },
   DEF: {
     code: "ЗЩ",
     name: "Защитник",
-    chessName: "Ладья",
-    moveSummary: "По прямой (вперёд, назад, вбок) до 6 клеток. Усиливает отбор на своей половине.",
-    rangeLabel: "Прямо до 6 клеток",
+    chessName: "Стоппер",
+    moveSummary: "Плотный шаг на 360° по каналам обороны (до 5 кл.), держит блок и страхует линию.",
+    rangeLabel: "360° канал до 5 кл.",
   },
   MID: {
     code: "ПЗ",
     name: "Полузащитник",
-    chessName: "Слон+",
-    moveSummary: "По диагонали до 7 клеток, плюс шаг до 2 клеток по прямой для смены фланга.",
-    rangeLabel: "Диагональ 7 + шаг 2",
+    chessName: "Диспетчер",
+    moveSummary: "Свободное движение 360° до 6 кл. через полуфланги, разрезающие навесы и смена темпа.",
+    rangeLabel: "360° обзор до 6 кл.",
   },
   WNG: {
     code: "КП",
     name: "Вингер",
-    chessName: "Конь+",
-    moveSummary: "Широкий прыжок «Г» (3+2 или 4+1) через игроков и барьеры, плюс рывок по прямой.",
-    rangeLabel: "Прыжок «Г» + рывок 3",
+    chessName: "Инсайд",
+    moveSummary: "Взрывной рывок по бровке и смещение в центр до 6.5 кл. с обводкой 1 опекуна (слалом).",
+    rangeLabel: "Слалом + рывок до 6.5 кл.",
   },
   FWD: {
     code: "НП",
     name: "Форвард",
-    chessName: "Ферзь",
-    moveSummary: "В любом направлении до 5 клеток с мячом или до 7 клеток при рывке без мяча.",
-    rangeLabel: "Любое напр. 5 (без мяча 7)",
+    chessName: "Наконечник",
+    moveSummary: "Агрессивное открывание на 360° (до 5.5 кл. с мячом / 7 кл. без мяча) и мощный удар.",
+    rangeLabel: "Рывок 5.5 (без мяча 7)",
   },
 };
 

@@ -10,7 +10,9 @@ import type {
   BallState,
   BlitzComplexity,
   BlitzModePreference,
+  BlitzPace,
   BlitzVariant,
+  FormationId,
   MoveOption,
   PassOption,
   PitchType,
@@ -22,8 +24,233 @@ import type {
   SquadProgressionState,
   TacticalHint,
   TacticalMentality,
+  TacticalPressureState,
   Team,
 } from "../types/game.ts";
+
+export const ACTION_AP_COSTS = {
+  moveShort: 1,
+  sprint: 2,
+  pass: 2,
+  fastPass: 1,
+  clash: 3,
+  shot: 3,
+  superShot: 2,
+} as const;
+
+export function computePlayerTurnBudget(
+  player: PlayerPiece | null,
+  progression?: SquadProgressionState,
+  difficulty: AIDifficulty = "tactical",
+  mentality: TacticalMentality = "balance"
+): number {
+  if (!player) return 5;
+  const prog = getEffectiveRoleProg(player.team, player.role, progression, difficulty);
+  const roleBase: Record<PlayerRole, number> = {
+    GK: 4,
+    DEF: 5,
+    MID: 6,
+    WNG: 6,
+    FWD: 5,
+  };
+  let ap = roleBase[player.role];
+  if (prog.stats.speed >= 3 || prog.stats.passing >= 3) ap += 1;
+  if (
+    prog.unlockedAbilities.includes("mid_maestro") ||
+    prog.unlockedAbilities.includes("wng_sprint")
+  ) {
+    ap += 1;
+  }
+
+  const onEnemyHalf =
+    player.team === "blue" ? player.pos.col >= PITCH_COLS / 2 : player.pos.col < PITCH_COLS / 2;
+  if (mentality === "attack" && onEnemyHalf && (player.role === "FWD" || player.role === "WNG")) {
+    ap += 1;
+  } else if (
+    mentality === "defend" &&
+    !onEnemyHalf &&
+    (player.role === "DEF" || player.role === "MID")
+  ) {
+    ap += 1;
+  }
+
+  if ((player.stamina ?? 100) < 35) ap -= 1;
+  return Math.max(3, Math.min(8, ap));
+}
+
+export function getMoveApCost(
+  from: Position,
+  to: Position,
+  kind: MoveOption["kind"],
+  hasBall: boolean
+): number {
+  if (kind === "clash") return ACTION_AP_COSTS.clash;
+  const dist = Math.hypot(to.col - from.col, to.row - from.row);
+  if (hasBall || dist > 3.2) return ACTION_AP_COSTS.sprint;
+  return ACTION_AP_COSTS.moveShort;
+}
+
+export function getPassApCost(
+  passer: PlayerPiece,
+  progression?: SquadProgressionState,
+  difficulty: AIDifficulty = "tactical"
+): number {
+  const prog = getEffectiveRoleProg(passer.team, passer.role, progression, difficulty);
+  if (prog.stats.passing >= 3 || prog.unlockedAbilities.includes("mid_lob")) {
+    return ACTION_AP_COSTS.fastPass;
+  }
+  return ACTION_AP_COSTS.pass;
+}
+
+export function getShotApCost(isSuperShot = false): number {
+  return isSuperShot ? ACTION_AP_COSTS.superShot : ACTION_AP_COSTS.shot;
+}
+
+export function computeSituationalTurnTime(
+  ball: BallState,
+  blitzPace: BlitzPace = "blitz"
+): number {
+  if (blitzPace === "relaxed") return 34;
+  const inDangerZone = ball.pos.col <= 7 || ball.pos.col >= PITCH_COLS - 8;
+  const inFinalThird = ball.pos.col <= 10 || ball.pos.col >= PITCH_COLS - 11;
+  if (blitzPace === "turbo") {
+    return inDangerZone ? 12 : inFinalThird ? 15 : 18;
+  }
+  return inDangerZone ? 16 : inFinalThird ? 19 : 24;
+}
+
+export function getOffsideLineCol(
+  attackingTeam: Team,
+  players: PlayerPiece[],
+  ball: BallState
+): number {
+  const defenders = players.filter((p) => p.team !== attackingTeam);
+  if (attackingTeam === "blue") {
+    const sorted = [...defenders].sort((a, b) => b.pos.col - a.pos.col);
+    const secondLastCol = sorted[1]?.pos.col ?? sorted[0]?.pos.col ?? PITCH_COLS - 2;
+    return Math.max(PITCH_COLS / 2, secondLastCol, ball.pos.col);
+  }
+  const sorted = [...defenders].sort((a, b) => a.pos.col - b.pos.col);
+  const secondLastCol = sorted[1]?.pos.col ?? sorted[0]?.pos.col ?? 1;
+  return Math.min(PITCH_COLS / 2 - 1, secondLastCol, ball.pos.col);
+}
+
+export function getOffsidePlayerIds(
+  attackingTeam: Team,
+  players: PlayerPiece[],
+  ball: BallState
+): Set<string> {
+  const lineCol = getOffsideLineCol(attackingTeam, players, ball);
+  const offside = new Set<string>();
+  for (const p of players) {
+    if (p.team !== attackingTeam || p.role === "GK" || p.id === ball.carrierId) continue;
+    if (attackingTeam === "blue") {
+      if (p.pos.col >= PITCH_COLS / 2 && p.pos.col > lineCol) {
+        offside.add(p.id);
+      }
+    } else {
+      if (p.pos.col <= PITCH_COLS / 2 - 1 && p.pos.col < lineCol) {
+        offside.add(p.id);
+      }
+    }
+  }
+  return offside;
+}
+
+export function applyTeamFormation(
+  players: PlayerPiece[],
+  team: Team,
+  formationId: FormationId,
+  ball: BallState,
+  pitchType: PitchType = "turf"
+): PlayerPiece[] {
+  const mirror = (col: number) => (team === "blue" ? col : PITCH_COLS - 1 - col);
+  const slotCoords: Record<FormationId, Array<{ col: number; row: number }>> = {
+    "4-3-3": [
+      { col: 1, row: 16 },
+      { col: 5, row: 5 },
+      { col: 4, row: 12 },
+      { col: 4, row: 20 },
+      { col: 5, row: 27 },
+      { col: 10, row: 7 },
+      { col: 9, row: 16 },
+      { col: 10, row: 25 },
+      { col: 14, row: 4 },
+      { col: 14, row: 28 },
+      { col: 15, row: 16 },
+    ],
+    "4-4-2": [
+      { col: 1, row: 16 },
+      { col: 5, row: 5 },
+      { col: 4, row: 12 },
+      { col: 4, row: 20 },
+      { col: 5, row: 27 },
+      { col: 10, row: 4 },
+      { col: 9, row: 12 },
+      { col: 9, row: 20 },
+      { col: 10, row: 28 },
+      { col: 14, row: 11 },
+      { col: 14, row: 21 },
+    ],
+    "3-5-2": [
+      { col: 1, row: 16 },
+      { col: 4, row: 7 },
+      { col: 4, row: 16 },
+      { col: 4, row: 25 },
+      { col: 9, row: 3 },
+      { col: 10, row: 10 },
+      { col: 11, row: 16 },
+      { col: 10, row: 22 },
+      { col: 9, row: 29 },
+      { col: 14, row: 11 },
+      { col: 14, row: 21 },
+    ],
+  };
+
+  const occupied = new Set<string>(
+    getPitchObstacles(pitchType).map((o) => `${o.col},${o.row}`)
+  );
+  for (const p of players) {
+    if (p.team !== team) occupied.add(`${p.pos.col},${p.pos.row}`);
+  }
+
+  const teamPlayers = players.filter((p) => p.team === team);
+  const roleOrder: Record<PlayerRole, number> = { GK: 0, DEF: 1, MID: 2, WNG: 3, FWD: 4 };
+  const sortedTeam = [...teamPlayers].sort(
+    (a, b) => roleOrder[a.role] - roleOrder[b.role] || a.number - b.number
+  );
+
+  const slots = slotCoords[formationId];
+  const assignedPos = new Map<string, Position>();
+
+  sortedTeam.forEach((p, idx) => {
+    if (p.id === ball.carrierId) {
+      assignedPos.set(p.id, p.pos);
+      occupied.add(`${p.pos.col},${p.pos.row}`);
+      return;
+    }
+    const rawSlot = slots[idx] ?? slots[slots.length - 1];
+    const desired = { col: mirror(rawSlot.col), row: rawSlot.row };
+    let placed: Position = p.pos;
+    outer: for (let r = 0; r <= 4; r++) {
+      for (let dc = -r; dc <= r; dc++) {
+        for (let dr = -r; dr <= r; dr++) {
+          const nc = desired.col + dc;
+          const nr = desired.row + dr;
+          const key = `${nc},${nr}`;
+          if (inBounds(nc, nr) && !occupied.has(key)) {
+            placed = { col: nc, row: nr };
+            occupied.add(key);
+            break outer;
+          }
+        }
+      }
+    }
+    assignedPos.set(p.id, placed);
+  });
+
+  return players.map((p) => (assignedPos.has(p.id) ? { ...p, pos: assignedPos.get(p.id)! } : p));
+}
 
 export function samePos(a: Position, b: Position): boolean {
   return a.col === b.col && a.row === b.row;
@@ -94,7 +321,6 @@ export function createInitialFormation(): {
   players: PlayerPiece[];
   ball: BallState;
 } {
-  // Authentic 11 vs 11 (4-3-2-1) formation on 32x32 pitch
   const players: PlayerPiece[] = [
     // Blue Team (Left side, attacks Right -> col 31)
     { id: "b-gk", team: "blue", role: "GK", number: 1, skinTone: 0, stamina: 100, pos: { col: 1, row: 16 } },
@@ -312,6 +538,120 @@ export function computeDuelBonusTimes(
   return { blueBonusMs, redBonusMs };
 }
 
+export function computeTacticalPressure(
+  player: PlayerPiece,
+  players: PlayerPiece[]
+): TacticalPressureState {
+  if (player.role === "GK") {
+    return {
+      level: "free",
+      frontBlockers: 0,
+      adjacentEnemies: 0,
+      reason: "Вратарь контролирует штрафную.",
+    };
+  }
+
+  const attackDir = player.team === "blue" ? 1 : -1;
+  let frontBlockers = 0;
+  let adjacentEnemies = 0;
+
+  for (const opp of players) {
+    if (opp.team === player.team) continue;
+    const dist = Math.hypot(opp.pos.col - player.pos.col, opp.pos.row - player.pos.row);
+    if (dist <= 1.65) {
+      adjacentEnemies += 1;
+    }
+
+    const forwardDelta = (opp.pos.col - player.pos.col) * attackDir;
+    const rowDelta = Math.abs(opp.pos.row - player.pos.row);
+    const inForwardWall = forwardDelta >= 0 && forwardDelta <= 4.5 && rowDelta <= 2.6;
+    const tightPress = dist <= 1.55 && forwardDelta >= -0.5;
+    if (inForwardWall || tightPress) {
+      frontBlockers += 1;
+    }
+  }
+
+  if (frontBlockers >= 3) {
+    return {
+      level: "retreat_only",
+      frontBlockers,
+      adjacentEnemies,
+      reason: `Тройной блок (${frontBlockers} защ.) — можно только отойти назад или отдать пас!`,
+    };
+  }
+  if (frontBlockers === 2) {
+    return {
+      level: "forward_blocked",
+      frontBlockers,
+      adjacentEnemies,
+      reason: "2 защитника впереди — путь вперёд закрыт! Пасуйте или уходите во фланг/назад.",
+    };
+  }
+  if (frontBlockers === 1) {
+    return {
+      level: "marked",
+      frontBlockers,
+      adjacentEnemies,
+      reason: "Опека 1 соперника впереди — ищите пас или смещайтесь в полуфланг.",
+    };
+  }
+
+  return {
+    level: "free",
+    frontBlockers: 0,
+    adjacentEnemies,
+    reason: "Чистый коридор для продвижения.",
+  };
+}
+
+/**
+ * Checks whether a 360-degree movement corridor from `from` to `to` is free of
+ * traffic walls/obstacles. Wingers (`allowSlalom = true`) can weave around 1
+ * intermediate body along the lane, simulating wide 1v1 slalom dribbling.
+ */
+function isMovementCorridorClear(
+  from: Position,
+  to: Position,
+  occupiedMap: Map<string, PlayerPiece>,
+  obstacleSet: Set<string>,
+  allowSlalom: boolean
+): boolean {
+  const dc = to.col - from.col;
+  const dr = to.row - from.row;
+  const dist = Math.hypot(dc, dr);
+  if (dist <= 1.5) return true;
+
+  const samples = Math.max(2, Math.ceil(dist * 2.2));
+  const hitKeys = new Set<string>();
+  let obstacleHit = false;
+
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples;
+    const sc = Math.round(from.col + dc * t);
+    const sr = Math.round(from.row + dr * t);
+    if ((sc === from.col && sr === from.row) || (sc === to.col && sr === to.row)) continue;
+    const key = `${sc},${sr}`;
+    if (obstacleSet.has(key)) {
+      if (!allowSlalom) return false;
+      obstacleHit = true;
+      hitKeys.add(key);
+    } else if (occupiedMap.has(key)) {
+      hitKeys.add(key);
+    }
+  }
+
+  if (allowSlalom) {
+    return hitKeys.size <= 1 && !obstacleHit ? true : hitKeys.size <= 1;
+  }
+  return hitKeys.size === 0;
+}
+
+/**
+ * Modern 360° Football Kinematics Engine:
+ * Replaces fixed chess-piece ray rules with role-authentic directional reach
+ * envelopes, ball-weight modifiers, terrain friction, slalom corridors, and
+ * tactical 2/3-defender blocking physics.
+ */
 export function getValidMoves(
   player: PlayerPiece,
   players: PlayerPiece[],
@@ -328,35 +668,128 @@ export function getValidMoves(
   const obstacleSet = new Set(getPitchObstacles(pitchType).map((o) => `${o.col},${o.row}`));
 
   const prog = getEffectiveRoleProg(player.team, player.role, progression, difficulty);
-  const speedBonus = prog.stats.speed >= 3 ? 1 : 0;
-  const tiredPenalty = (player.stamina ?? 100) < 30 ? 1 : 0;
-  const sandPenalty = pitchType === "sand" ? 2 : 0;
-  const iceSlideBonus = pitchType === "ice" ? 2 : 0;
+  const speedBonus = prog.stats.speed >= 3 ? 1.15 : prog.stats.speed >= 2 ? 0.45 : 0;
+  const tiredPenalty = (player.stamina ?? 100) < 30 ? 1.25 : 0;
+  const sandPenalty = pitchType === "sand" ? 1.65 : 0;
+  const iceSlideBonus = pitchType === "ice" ? 2.0 : 0;
 
-  const results: MoveOption[] = [];
-  const seen = new Set<string>();
+  const pressure = computeTacticalPressure(player, players);
+  const attackDir = player.team === "blue" ? 1 : -1;
   const hasBall = ball.carrierId === player.id;
 
-  const pushTarget = (
-    col: number,
-    row: number,
-    isSlide = false
-  ): "empty" | "enemy" | "ally" | "oob" => {
-    if (!inBounds(col, row)) return "oob";
-    const key = `${col},${row}`;
-    if (obstacleSet.has(key)) return "oob";
+  // Role-specific 360-degree elliptical tactical envelopes
+  let baseRadius = 5.0;
+  let forwardReach = 5.0;
+  let backReach = 5.0;
+  let lateralReach = 5.0;
+  let allowSlalom = false;
 
-    const occupant = occupiedMap.get(key);
-    if (occupant) {
-      if (occupant.team === player.team) return "ally";
-      if (!seen.has(key)) {
-        seen.add(key);
+  switch (player.role) {
+    case "GK": {
+      const r = 3.4 + (prog.stats.speed >= 3 ? 0.8 : 0);
+      baseRadius = r;
+      forwardReach = r;
+      backReach = r;
+      lateralReach = r;
+      break;
+    }
+    case "DEF": {
+      const slideBonus = prog.unlockedAbilities.includes("def_slide") ? 0.8 : 0;
+      baseRadius = Math.max(2.3, 4.9 + speedBonus + slideBonus - sandPenalty - tiredPenalty);
+      forwardReach = baseRadius * 0.92;
+      backReach = baseRadius * 1.04;
+      lateralReach = baseRadius * 1.08;
+      break;
+    }
+    case "MID": {
+      const maestro = prog.unlockedAbilities.includes("mid_maestro") ? 1.6 : 0;
+      baseRadius = Math.max(2.6, 5.8 + speedBonus + maestro - sandPenalty - tiredPenalty);
+      forwardReach = baseRadius;
+      backReach = baseRadius * 0.96;
+      lateralReach = baseRadius * 1.05;
+      break;
+    }
+    case "WNG": {
+      const sprintBonus = prog.unlockedAbilities.includes("wng_sprint") ? 1.4 : 0;
+      // Sand hinders WNG less if sprinting on touchline slalom
+      const wngSand = pitchType === "sand" ? 0.85 : 0;
+      baseRadius = Math.max(3.0, 5.8 + speedBonus + sprintBonus - wngSand - tiredPenalty);
+      forwardReach = baseRadius * 1.12;
+      backReach = baseRadius * 0.85;
+      lateralReach = baseRadius * 1.08;
+      allowSlalom = true;
+      break;
+    }
+    case "FWD": {
+      const raw = hasBall ? 5.3 : 6.9;
+      baseRadius = Math.max(2.6, raw + speedBonus - sandPenalty - tiredPenalty);
+      forwardReach = baseRadius * 1.08;
+      backReach = baseRadius * 0.86;
+      lateralReach = baseRadius * 0.95;
+      break;
+    }
+  }
+
+  const maxSpan = Math.ceil(Math.max(forwardReach, backReach, lateralReach) + iceSlideBonus);
+  const results: MoveOption[] = [];
+
+  for (let dc = -maxSpan; dc <= maxSpan; dc++) {
+    for (let dr = -maxSpan; dr <= maxSpan; dr++) {
+      if (dc === 0 && dr === 0) continue;
+      const col = player.pos.col + dc;
+      const row = player.pos.row + dr;
+      if (!inBounds(col, row)) continue;
+
+      const key = `${col},${row}`;
+      if (obstacleSet.has(key)) continue;
+
+      // GK stays disciplined near defensive half unless rushing loose ball nearby
+      if (player.role === "GK") {
+        const halfLimit = player.team === "blue" ? 9 : PITCH_COLS - 10;
+        const crossesTooFar = player.team === "blue" ? col > halfLimit : col < halfLimit;
+        if (crossesTooFar) continue;
+      }
+
+      const forwardDelta = dc * attackDir;
+      const xRadius = forwardDelta >= 0 ? forwardReach : backReach;
+      const normBase = Math.hypot(dc / Math.max(1, xRadius), dr / Math.max(1, lateralReach));
+      const normWithIce = Math.hypot(
+        dc / Math.max(1, xRadius + iceSlideBonus),
+        dr / Math.max(1, lateralReach + iceSlideBonus)
+      );
+
+      if (normWithIce > 1.02) continue;
+      const isSlide = iceSlideBonus > 0 && normBase > 1.02;
+
+      const occupant = occupiedMap.get(key);
+      if (occupant) {
+        if (occupant.team === player.team) continue;
+
+        // Direct-only blitz confrontation rules
+        const occupantHasBall = ball.carrierId === occupant.id;
+        const looseBallNear =
+          ball.carrierId === null &&
+          Math.hypot(occupant.pos.col - ball.pos.col, occupant.pos.row - ball.pos.row) <= 2.2;
+        const directReach = Math.hypot(dc, dr) <= 2.8;
+        const canForceBreakthrough =
+          hasBall &&
+          directReach &&
+          pressure.level !== "retreat_only" &&
+          !(pressure.level === "forward_blocked" && forwardDelta > 0);
+        const isDirectInteraction = occupantHasBall || looseBallNear || canForceBreakthrough;
+
+        if (!isDirectInteraction) continue;
+        if (!isMovementCorridorClear(player.pos, { col, row }, occupiedMap, obstacleSet, allowSlalom)) {
+          continue;
+        }
+
         const targetPos = { col, row };
         results.push({
           pos: targetPos,
           kind: "clash",
           opponentId: occupant.id,
           isSlide,
+          apCost: getMoveApCost(player.pos, targetPos, "clash", hasBall),
           complexity: evaluateCollisionComplexity(
             player,
             occupant,
@@ -369,128 +802,48 @@ export function getValidMoves(
             difficulty
           ),
         });
+        continue;
       }
-      return "enemy";
-    }
 
-    if (!seen.has(key)) {
-      seen.add(key);
-      const isLooseBall =
-        ball.carrierId === null && ball.pos.col === col && ball.pos.row === row;
+      // Tactical 2/3-defender blocking rules
+      if (pressure.level === "forward_blocked" && forwardDelta > 0) continue;
+      if (pressure.level === "retreat_only" && forwardDelta >= 0) continue;
+
+      if (!isMovementCorridorClear(player.pos, { col, row }, occupiedMap, obstacleSet, allowSlalom)) {
+        continue;
+      }
+
+      const isLooseBall = ball.carrierId === null && ball.pos.col === col && ball.pos.row === row;
+      const targetPos = { col, row };
+      const kind = isLooseBall ? "pickup" : "move";
       results.push({
-        pos: { col, row },
-        kind: isLooseBall ? "pickup" : "move",
+        pos: targetPos,
+        kind,
         isSlide,
+        apCost: getMoveApCost(player.pos, targetPos, kind, hasBall),
       });
     }
-    return "empty";
-  };
+  }
 
-  const traceRay = (dc: number, dr: number, maxSteps: number) => {
-    const effectiveMax = Math.max(1, maxSteps + iceSlideBonus);
-    for (let step = 1; step <= effectiveMax; step++) {
-      const nc = player.pos.col + dc * step;
-      const nr = player.pos.row + dr * step;
-      const isSlideStep = iceSlideBonus > 0 && step > maxSteps;
-      const status = pushTarget(nc, nr, isSlideStep);
-      if (status !== "empty") break;
-    }
-  };
-
-  switch (player.role) {
-    case "GK": {
-      const gkRange = 2 + speedBonus;
-      const dirs = [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-        [1, 1],
-        [1, -1],
-        [-1, 1],
-        [-1, -1],
-      ];
-      for (const [dc, dr] of dirs) {
-        traceRay(dc, dr, gkRange);
+  // Emergency back-line escape valve if triple-blocked with zero backward cells
+  if (pressure.level === "retreat_only" && results.length === 0) {
+    for (const [dc, dr] of [
+      [-attackDir, 1],
+      [-attackDir, -1],
+      [-attackDir, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nc = player.pos.col + dc;
+      const nr = player.pos.row + dr;
+      const key = `${nc},${nr}`;
+      if (inBounds(nc, nr) && !obstacleSet.has(key) && !occupiedMap.has(key)) {
+        results.push({
+          pos: { col: nc, row: nr },
+          kind: "move",
+          apCost: ACTION_AP_COSTS.moveShort,
+        });
       }
-      break;
-    }
-    case "DEF": {
-      const range = Math.max(2, 6 + speedBonus - sandPenalty - tiredPenalty);
-      traceRay(1, 0, range);
-      traceRay(-1, 0, range);
-      traceRay(0, 1, range);
-      traceRay(0, -1, range);
-      if (prog.unlockedAbilities.includes("def_slide")) {
-        traceRay(1, 1, 3);
-        traceRay(1, -1, 3);
-        traceRay(-1, 1, 3);
-        traceRay(-1, -1, 3);
-      }
-      break;
-    }
-    case "MID": {
-      const maestroBonus = prog.unlockedAbilities.includes("mid_maestro") ? 2 : 0;
-      const range = Math.max(2, 7 + speedBonus + maestroBonus - sandPenalty - tiredPenalty);
-      traceRay(1, 1, range);
-      traceRay(1, -1, range);
-      traceRay(-1, 1, range);
-      traceRay(-1, -1, range);
-      traceRay(1, 0, 2);
-      traceRay(-1, 0, 2);
-      traceRay(0, 1, 2);
-      traceRay(0, -1, 2);
-      break;
-    }
-    case "WNG": {
-      const knightJumps = [
-        [4, 2],
-        [4, -2],
-        [-4, 2],
-        [-4, -2],
-        [2, 4],
-        [2, -4],
-        [-2, 4],
-        [-2, -4],
-        [3, 1],
-        [3, -1],
-        [-3, 1],
-        [-3, -1],
-        [1, 3],
-        [1, -3],
-        [-1, 3],
-        [-1, -3],
-      ];
-      for (const [dc, dr] of knightJumps) {
-        pushTarget(player.pos.col + dc, player.pos.row + dr);
-      }
-      const stepRange = Math.max(
-        2,
-        (prog.unlockedAbilities.includes("wng_sprint") ? 5 : speedBonus > 0 ? 4 : 3) - tiredPenalty
-      );
-      traceRay(1, 0, stepRange);
-      traceRay(-1, 0, stepRange);
-      traceRay(0, 1, stepRange);
-      traceRay(0, -1, stepRange);
-      break;
-    }
-    case "FWD": {
-      const baseRange = hasBall ? 5 : 7;
-      const range = Math.max(2, baseRange + speedBonus - sandPenalty - tiredPenalty);
-      const dirs = [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-        [1, 1],
-        [1, -1],
-        [-1, 1],
-        [-1, -1],
-      ];
-      for (const [dc, dr] of dirs) {
-        traceRay(dc, dr, range);
-      }
-      break;
     }
   }
 
@@ -519,7 +872,7 @@ function countSegmentBlockers(
     if (t <= 0.05 || t >= 0.95) continue;
     const projX = from.col + t * dx;
     const projY = from.row + t * dy;
-    if (Math.hypot(p.pos.col - projX, p.pos.row - projY) < 0.72) enemies++;
+    if (Math.hypot(p.pos.col - projX, p.pos.row - projY) < 0.85) enemies++;
   }
 
   for (const obs of obstacles) {
@@ -531,6 +884,49 @@ function countSegmentBlockers(
   }
 
   return { enemies, obstacles: obstacleCount };
+}
+
+export function getEnemyControlZones(
+  team: Team,
+  players: PlayerPiece[],
+  pitchType: PitchType = "turf"
+): Position[] {
+  const occupied = new Set(players.map((p) => `${p.pos.col},${p.pos.row}`));
+  for (const obs of getPitchObstacles(pitchType)) {
+    occupied.add(`${obs.col},${obs.row}`);
+  }
+  const seen = new Set<string>();
+  const zones: Position[] = [];
+  const oppDir = team === "blue" ? -1 : 1;
+
+  for (const opp of players) {
+    if (opp.team === team || opp.role === "GK") continue;
+    const offsets: Array<[number, number]> =
+      opp.role === "DEF" || opp.role === "MID"
+        ? [
+            [oppDir, 0],
+            [0, -1],
+            [0, 1],
+            [oppDir, -1],
+            [oppDir, 1],
+          ]
+        : [
+            [oppDir, 0],
+            [0, -1],
+            [0, 1],
+          ];
+
+    for (const [dc, dr] of offsets) {
+      const col = opp.pos.col + dc;
+      const row = opp.pos.row + dr;
+      if (!inBounds(col, row)) continue;
+      const key = `${col},${row}`;
+      if (occupied.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      zones.push({ col, row });
+    }
+  }
+  return zones;
 }
 
 export function getValidPasses(
@@ -548,8 +944,12 @@ export function getValidPasses(
   const iceBonus = pitchType === "ice" ? 3.5 : 0;
   const gkKickBonus =
     player.role === "GK" && prog.unlockedAbilities.includes("gk_longkick") ? 6.0 : 0;
-  const maxDist = 11.5 + (prog.stats.passing - 1) * 2.0 + iceBonus + gkKickBonus;
+  const maxDist = 12.0 + (prog.stats.passing - 1) * 2.0 + iceBonus + gkKickBonus;
   const canLob = prog.stats.passing >= 3 || prog.unlockedAbilities.includes("mid_lob");
+  const offsideSet = getOffsidePlayerIds(player.team, players, ball);
+  const apCost = getPassApCost(player, progression, difficulty);
+  const attackDir = player.team === "blue" ? 1 : -1;
+  const enemies = players.filter((p) => p.team !== player.team);
 
   const options: PassOption[] = [];
   for (const mate of players) {
@@ -559,11 +959,33 @@ export function getValidPasses(
 
     const blockers = countSegmentBlockers(player.pos, mate.pos, player.team, players, obstacles);
     const totalBlockers = blockers.enemies + blockers.obstacles;
-    if (totalBlockers === 0) {
-      options.push({ targetPlayerId: mate.id, pos: mate.pos, isLob: false });
-    } else if (canLob && totalBlockers === 1) {
-      options.push({ targetPlayerId: mate.id, pos: mate.pos, isLob: true });
-    }
+    if (totalBlockers > 1 || (totalBlockers === 1 && !canLob)) continue;
+
+    const isOffside = offsideSet.has(mate.id);
+    const forwardProgress = (mate.pos.col - player.pos.col) * attackDir;
+    const recMinEnemyDist = enemies.reduce((best, opp) => {
+      const d = Math.hypot(opp.pos.col - mate.pos.col, opp.pos.row - mate.pos.row);
+      return d < best ? d : best;
+    }, 99);
+    const inTargetShootZone =
+      mate.team === "blue" ? mate.pos.col >= PITCH_COLS - 9 : mate.pos.col <= 8;
+    const isKeyPass =
+      !isOffside &&
+      mate.role !== "GK" &&
+      forwardProgress >= 2 &&
+      (inTargetShootZone || (recMinEnemyDist >= 2.5 && forwardProgress >= 4));
+    const interceptionRisk: "safe" | "tight" =
+      totalBlockers === 1 || recMinEnemyDist <= 1.75 ? "tight" : "safe";
+
+    options.push({
+      targetPlayerId: mate.id,
+      pos: mate.pos,
+      isLob: totalBlockers === 1,
+      isOffside,
+      isKeyPass,
+      interceptionRisk,
+      apCost,
+    });
   }
   return options;
 }
@@ -587,8 +1009,8 @@ export function getShotOptions(
   const targetCol = player.team === "blue" ? PITCH_COLS - 1 : 0;
   const inShootingZone =
     player.team === "blue"
-      ? player.pos.col >= PITCH_COLS - 8 - extraShootReach
-      : player.pos.col <= 7 + extraShootReach;
+      ? player.pos.col >= PITCH_COLS - 9 - extraShootReach
+      : player.pos.col <= 8 + extraShootReach;
 
   if (!inShootingZone) return [];
 
@@ -604,7 +1026,7 @@ export function getShotOptions(
         (opp) =>
           opp.role === "GK" &&
           Math.abs(opp.pos.col - goalCell.col) <= 2 &&
-          Math.abs(opp.pos.row - goalCell.row) <= 2
+          Math.abs(opp.pos.row - goalCell.row) <= 1
       );
     }
 
@@ -615,21 +1037,23 @@ export function getShotOptions(
         const lenSq = dx * dx + dy * dy;
         if (lenSq === 0) return false;
         const t = ((opp.pos.col - player.pos.col) * dx + (opp.pos.row - player.pos.row) * dy) / lenSq;
-        if (t <= 0.05 || t >= 1.05) return false;
+        if (t <= 0.05 || t >= 1.0) return false;
         const dist = Math.hypot(
           opp.pos.col - (player.pos.col + t * dx),
           opp.pos.row - (player.pos.row + t * dy)
         );
-        return dist < 0.85;
+        return dist < 0.65;
       });
       if (segBlocker) blocker = segBlocker;
     }
 
+    const shotApCost = getShotApCost(isSuperShot);
     if (blocker) {
       shots.push({
         goalRow,
         isContested: true,
         defenderId: blocker.id,
+        apCost: shotApCost,
         complexity: evaluateCollisionComplexity(
           player,
           blocker,
@@ -644,7 +1068,7 @@ export function getShotOptions(
         ),
       });
     } else {
-      shots.push({ goalRow, isContested: false });
+      shots.push({ goalRow, isContested: false, apCost: shotApCost });
     }
   }
 
@@ -760,7 +1184,6 @@ export function computeBestTacticalMove(
     return open;
   };
 
-  // Identify most dangerous enemy forward/receiver when defending
   const dangerousEnemyTarget =
     carrier && carrier.team !== team
       ? enemyPlayers
@@ -803,7 +1226,6 @@ export function computeBestTacticalMove(
         } else {
           const distPenalty = Math.abs(p.pos.col - targetGoalCol) * 3.5;
           const sizePenalty = (shot.complexity?.size ?? 3) >= 5 ? 38 : (shot.complexity?.size ?? 3) === 4 ? 12 : 0;
-          // On tactical/pro, don't force tough 5x5 long shots if a clean forward pass is open
           const forcePenalty = isTactical && bestPassAvailable && sizePenalty > 15 ? 45 : 0;
           candidates.push({
             score: 215 - distPenalty - sizePenalty - forcePenalty,
@@ -841,6 +1263,7 @@ export function computeBestTacticalMove(
         const sandPassBonus = pitchType === "sand" && progress > 0 ? 22 : 0;
         const safetyBonus = receiverEnemyDist >= 2.8 ? 18 : receiverEnemyDist <= 1.5 ? -22 : 0;
         const pressEscapeBonus = passerCloseEnemies >= 2 && receiverEnemyDist > passerEnemyDist ? 26 : 0;
+        const keyPassBonus = pass.isKeyPass ? 28 : 0;
 
         let score =
           32 +
@@ -850,12 +1273,14 @@ export function computeBestTacticalMove(
           flankSwitch +
           sandPassBonus +
           safetyBonus +
-          pressEscapeBonus;
+          pressEscapeBonus +
+          keyPassBonus;
 
         if (receiver.role === "FWD" && progress > 0) score += 22;
         if (receiver.role === "WNG" && receiverEnemyDist >= 3 && progress > 1) score += 16;
         if (recGoalDist <= 7) score += 48;
         if (receiver.role === "GK") score -= 55;
+        if (pass.isOffside) score -= isTactical ? 280 : 120;
 
         candidates.push({
           score,
@@ -867,6 +1292,8 @@ export function computeBestTacticalMove(
             reason:
               nextShotSetup >= 95
                 ? `Проникающий пас на ${ROLE_META[receiver.role].code} под открытый удар!`
+                : pass.isKeyPass
+                ? `Голевой пас на свободного ${ROLE_META[receiver.role].code} взламывает оборону!`
                 : `${pass.isLob ? "Навесной пас" : "Пас"} на свободного ${ROLE_META[receiver.role].code} ускоряет атаку.`,
           },
         });
@@ -951,12 +1378,10 @@ export function computeBestTacticalMove(
           const oppDistBefore = Math.hypot(p.pos.col - carrier.pos.col, p.pos.row - carrier.pos.row);
           const oppDistAfter = Math.hypot(mv.pos.col - carrier.pos.col, mv.pos.row - carrier.pos.row);
 
-          // Stay goal-side of enemy ball carrier
           const isGoalSide =
             team === "blue" ? mv.pos.col <= carrier.pos.col : mv.pos.col >= carrier.pos.col;
           const goalSideBonus = isGoalSide ? 18 : -16;
 
-          // Passing lane intercept bonus toward top enemy striker
           let laneBlockBonus = 0;
           if (isTactical && dangerousEnemyTarget) {
             const dx = dangerousEnemyTarget.pos.col - carrier.pos.col;
@@ -1015,11 +1440,6 @@ export function computeBestTacticalMove(
   return candidates[0].hint;
 }
 
-/**
- * FIFA Mobile-style live 11v11 off-ball dynamics:
- * Supporting teammates push into open lanes, defenders close space toward the ball,
- * and both goalkeepers shadow the ball vertically inside their 6-yard goalmouth.
- */
 export function applyDynamicOffBallRuns(
   players: PlayerPiece[],
   activePlayerId: string,
@@ -1034,11 +1454,8 @@ export function applyDynamicOffBallRuns(
   occupied.add(`${ball.pos.col},${ball.pos.row}`);
 
   const carrier = ball.carrierId ? players.find((p) => p.id === ball.carrierId) ?? null : null;
-
-  // Score how relevant each off-ball player is to make a supporting/marking run
   const nextPlayers = players.map((p) => ({ ...p, pos: { ...p.pos } }));
 
-  // 1. Goalkeepers dynamically track the ball's row within GOAL_ROWS (13..18)
   for (const p of nextPlayers) {
     if (p.role !== "GK" || p.id === activePlayerId || p.id === ball.carrierId) continue;
     const desiredCol = p.team === "blue" ? 1 : PITCH_COLS - 2;
@@ -1055,7 +1472,6 @@ export function applyDynamicOffBallRuns(
     }
   }
 
-  // 2. Outfield players closest to play make realistic 1-2 square tactical runs
   const outfieldCandidates = nextPlayers
     .filter((p) => p.role !== "GK" && p.id !== activePlayerId && p.id !== ball.carrierId)
     .map((p) => ({
@@ -1086,26 +1502,24 @@ export function applyDynamicOffBallRuns(
     let desiredRow = p.pos.row;
 
     if (carrier && carrier.team === p.team) {
-      // Attacking off-ball run: push forward into lane ahead of ball while keeping wing spread
-      const forwardBoost = p.role === "FWD" ? 2 : p.role === "WNG" ? 2 : p.role === "MID" ? 1 : 1;
+      const forwardBoost = p.role === "FWD" ? 2 : p.role === "WNG" ? 2 : 1;
       desiredCol = p.pos.col + attackDir * forwardBoost + mentalityShift * attackDir;
-      // Subtle lane drift away from carrier row for better pass triangles
       const rowDiff = p.pos.row - carrier.pos.row;
-      if (Math.abs(rowDiff) <= 2) {
-        desiredRow += rowDiff >= 0 ? 1 : -1;
+      if (Math.abs(rowDiff) <= 3) {
+        desiredRow += rowDiff >= 0 ? 2 : -2;
       }
     } else if (carrier && carrier.team !== p.team) {
-      // Defensive compactness: step toward carrier's column/row without leaving goal exposed
-      const goalSideCol = carrier.pos.col - attackDir * 2 + mentalityShift * attackDir;
-      desiredCol = p.pos.col + Math.sign(goalSideCol - p.pos.col);
-      desiredRow = p.pos.row + Math.sign(carrier.pos.row - p.pos.row);
+      const carrierAttackDir = -attackDir;
+      const goalSideCol = carrier.pos.col + carrierAttackDir * 2 + mentalityShift * attackDir;
+      const defenderOrder = p.number % 3;
+      const rowOffset = defenderOrder === 0 ? 0 : defenderOrder === 1 ? -1 : 1;
+      desiredCol = goalSideCol;
+      desiredRow = carrier.pos.row + rowOffset;
     } else {
-      // Loose ball: nearest teammates converge
       desiredCol = p.pos.col + Math.sign(ball.pos.col - p.pos.col);
       desiredRow = p.pos.row + Math.sign(ball.pos.row - p.pos.row);
     }
 
-    // Clamp sensible zonal limits by role so defenders stay defensively anchored
     if (p.role === "DEF") {
       desiredCol =
         p.team === "blue"
@@ -1120,7 +1534,6 @@ export function applyDynamicOffBallRuns(
     const stepRow = Math.max(-1, Math.min(1, desiredRow - p.pos.row));
     if (stepCol === 0 && stepRow === 0) continue;
 
-    // Try diagonal/direct step, then axis fallbacks
     const tryOffsets = [
       { dc: stepCol, dr: stepRow },
       { dc: stepCol, dr: 0 },

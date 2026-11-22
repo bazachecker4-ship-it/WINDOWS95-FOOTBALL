@@ -52,7 +52,7 @@ export const Win95CaptionButtons: React.FC<Win95CaptionButtonsProps> = ({
   onClose,
   closeLabel = "Закрыть окно",
 }) => (
-  <div className="flex items-center gap-[2px] shrink-0" data-win-btn="true">
+  <div className="flex items-center gap-[3px] sm:gap-[2px] shrink-0" data-win-btn="true">
     {onMinimize && (
       <button
         type="button"
@@ -62,9 +62,9 @@ export const Win95CaptionButtons: React.FC<Win95CaptionButtonsProps> = ({
         }}
         title="Свернуть"
         aria-label="Свернуть"
-        className="pc-btn w-[18px] h-[16px] flex items-end justify-center pb-[2px] cursor-pointer"
+        className="pc-btn w-[26px] h-[22px] sm:w-[18px] sm:h-[16px] flex items-end justify-center pb-[3px] sm:pb-[2px] cursor-pointer"
       >
-        <span className="block w-[7px] h-[2px] bg-black" />
+        <span className="block w-[8px] sm:w-[7px] h-[2px] bg-black" />
       </button>
     )}
     {onMaximize && (
@@ -76,7 +76,7 @@ export const Win95CaptionButtons: React.FC<Win95CaptionButtonsProps> = ({
         }}
         title={isMaximized ? "Восстановить размер" : "Развернуть на весь экран"}
         aria-label={isMaximized ? "Восстановить размер" : "Развернуть на весь экран"}
-        className="pc-btn w-[18px] h-[16px] flex items-center justify-center cursor-pointer"
+        className="pc-btn w-[26px] h-[22px] sm:w-[18px] sm:h-[16px] flex items-center justify-center cursor-pointer"
       >
         {isMaximized ? (
           <svg viewBox="0 0 10 10" className="w-[10px] h-[10px]" shapeRendering="crispEdges">
@@ -99,9 +99,9 @@ export const Win95CaptionButtons: React.FC<Win95CaptionButtonsProps> = ({
         }}
         title={closeLabel}
         aria-label={closeLabel}
-        className="pc-btn w-[18px] h-[16px] flex items-center justify-center cursor-pointer ml-[2px]"
+        className="pc-btn w-[26px] h-[22px] sm:w-[18px] sm:h-[16px] flex items-center justify-center cursor-pointer ml-[2px]"
       >
-        <svg viewBox="0 0 10 10" className="w-[9px] h-[9px]" shapeRendering="crispEdges">
+        <svg viewBox="0 0 10 10" className="w-[10px] h-[10px] sm:w-[9px] sm:h-[9px]" shapeRendering="crispEdges">
           <path d="M1 1 L9 9 M9 1 L1 9" stroke="#000000" strokeWidth="1.8" />
         </svg>
       </button>

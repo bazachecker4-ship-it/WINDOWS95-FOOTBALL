@@ -274,7 +274,7 @@ export const PixelTrophyIllustration: React.FC<{ className?: string }> = ({
 );
 
 export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }) => (
-  <div className="relative w-full h-full min-h-[240px] flex flex-col justify-between bg-[#1e3a8a] overflow-hidden border-2 border-t-[#808080] border-l-[#808080] border-r-white border-b-white select-none">
+  <div className="relative w-full h-full min-h-[250px] flex flex-col justify-between bg-[#0f172a] overflow-hidden border-2 border-t-[#808080] border-l-[#808080] border-r-white border-b-white select-none shadow-inner">
     <svg
       viewBox="0 0 220 210"
       preserveAspectRatio="xMidYMid slice"
@@ -282,33 +282,62 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
       className="w-full flex-1 block"
       aria-hidden="true"
     >
-      {/* Sky */}
-      <rect width="220" height="72" fill="#2563eb" />
-      <rect y="36" width="220" height="36" fill="#3b82f6" />
-      {/* Stadium Roof & Stands */}
-      <rect y="58" width="220" height="34" fill="#1e293b" />
-      <rect y="55" width="220" height="5" fill="#64748b" />
-      {/* Floodlights */}
-      <rect x="16" y="22" width="26" height="14" fill="#cbd5e1" />
-      <rect x="19" y="25" width="20" height="8" fill="#fef9c3" />
-      <rect x="27" y="36" width="4" height="22" fill="#94a3b8" />
-      <rect x="178" y="22" width="26" height="14" fill="#cbd5e1" />
-      <rect x="181" y="25" width="20" height="8" fill="#fef9c3" />
-      <rect x="189" y="36" width="4" height="22" fill="#94a3b8" />
+      {/* Twilight Floodlit Sky */}
+      <rect width="220" height="72" fill="#0f2557" />
+      <rect y="28" width="220" height="24" fill="#1d4ed8" />
+      <rect y="50" width="220" height="22" fill="#2563eb" />
+      {/* Subtle Pixel Stars */}
+      <rect x="52" y="10" width="2" height="2" fill="#e0f2fe" />
+      <rect x="166" y="11" width="2" height="2" fill="#fef9c3" />
+      <rect x="46" y="28" width="1" height="1" fill="#ffffff" />
+      <rect x="172" y="25" width="1" height="1" fill="#ffffff" />
+
+      {/* Stadium Upper Roof & Double Tiered Stands */}
+      <rect y="56" width="220" height="36" fill="#1e293b" />
+      <rect y="54" width="220" height="4" fill="#94a3b8" />
+      <rect y="74" width="220" height="2" fill="#334155" />
+
+      {/* Floodlight Light Beams */}
+      <polygon points="14,34 42,34 104,164 0,164" fill="#fef9c3" opacity="0.1" />
+      <polygon points="178,34 206,34 220,164 116,164" fill="#fef9c3" opacity="0.1" />
+
+      {/* Twin Stadium Floodlight Towers */}
+      <rect x="14" y="18" width="28" height="15" fill="#cbd5e1" />
+      <rect x="17" y="21" width="22" height="9" fill="#fef08a" />
+      <rect x="26" y="33" width="4" height="23" fill="#94a3b8" />
+      <rect x="178" y="18" width="28" height="15" fill="#cbd5e1" />
+      <rect x="181" y="21" width="22" height="9" fill="#fef08a" />
+      <rect x="190" y="33" width="4" height="23" fill="#94a3b8" />
+
+      {/* Center Digital Stadium Scoreboard Banner */}
+      <rect x="64" y="12" width="92" height="24" fill="#05080f" />
+      <rect x="66" y="14" width="88" height="20" fill="#000080" />
+      <rect x="66" y="14" width="88" height="2" fill="#38bdf8" opacity="0.6" />
+      <text
+        x="110"
+        y="27"
+        textAnchor="middle"
+        fontSize="8.5"
+        fontWeight="bold"
+        fontFamily="monospace"
+        fill="#fde047"
+      >
+        CUP 95 LIVE
+      </text>
 
       {/* Colorful Pixel Crowd */}
       {Array.from({ length: 34 }).map((_, i) => (
         <React.Fragment key={i}>
           <rect
             x={4 + i * 6.4}
-            y={64 + (i % 2) * 3}
+            y={62 + (i % 2) * 3}
             width="4"
             height="4"
             fill={["#ef4444", "#facc15", "#ffffff", "#60a5fa", "#4ade80"][i % 5]}
           />
           <rect
             x={6 + i * 6.4}
-            y={74 + (i % 3) * 2}
+            y={77 + (i % 3) * 2}
             width="4"
             height="4"
             fill={["#ffffff", "#3b82f6", "#f87171", "#fde047"][i % 4]}
@@ -316,25 +345,26 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
         </React.Fragment>
       ))}
 
-      {/* Perimeter Ad Boards */}
-      <rect y="90" width="220" height="11" fill="#0f172a" />
+      {/* Illuminated Perimeter Ad Boards */}
+      <rect y="90" width="220" height="11" fill="#090d16" />
       <rect x="4" y="92" width="48" height="7" fill="#1d4ed8" />
       <rect x="56" y="92" width="52" height="7" fill="#dc2626" />
-      <rect x="112" y="92" width="52" height="7" fill="#0f766e" />
+      <rect x="112" y="92" width="52" height="7" fill="#047857" />
       <rect x="168" y="92" width="48" height="7" fill="#1e3a8a" />
 
       {/* Sunlit Mowed Grass Pitch */}
-      <rect y="101" width="220" height="109" fill="#2e9e2b" />
-      <rect y="101" width="220" height="16" fill="#37b233" />
-      <rect y="133" width="220" height="18" fill="#37b233" />
-      <rect y="169" width="220" height="20" fill="#37b233" />
-      {/* White Chalk Lines */}
-      <rect y="110" width="220" height="2" fill="#f8fafc" />
-      <path d="M22 110 L2 185" stroke="#f8fafc" strokeWidth="2" />
-      <path d="M198 110 L218 185" stroke="#f8fafc" strokeWidth="2" />
+      <rect y="101" width="220" height="109" fill="#2c9c29" />
+      <rect y="101" width="220" height="16" fill="#37b833" />
+      <rect y="133" width="220" height="18" fill="#37b833" />
+      <rect y="169" width="220" height="20" fill="#37b833" />
+      {/* White Chalk Lines & Penalty Box Hint */}
+      <rect y="109" width="220" height="2" fill="#f8fafc" />
+      <path d="M22 109 L2 185" stroke="#f8fafc" strokeWidth="2" />
+      <path d="M198 109 L218 185" stroke="#f8fafc" strokeWidth="2" />
+      <path d="M84 109 L74 134 L146 134 L136 109" fill="none" stroke="#f8fafc" strokeWidth="1.5" opacity="0.65" />
 
       {/* Background Opponents */}
-      <g transform="translate(154,104)">
+      <g transform="translate(154,102)">
         <rect x="2" y="18" width="12" height="3" fill="rgba(0,0,0,0.35)" />
         <rect x="5" y="1" width="6" height="6" fill="#e2a87e" />
         <rect x="5" y="0" width="6" height="2" fill="#1e1b18" />
@@ -342,24 +372,24 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
         <rect x="4" y="14" width="8" height="4" fill="#1e3a8a" />
       </g>
 
+      {/* Motion Speed Lines behind #10 Striker & Ball */}
+      <rect x="18" y="128" width="26" height="2" fill="#e0f2fe" opacity="0.45" />
+      <rect x="10" y="142" width="32" height="2" fill="#e0f2fe" opacity="0.32" />
+      <rect x="74" y="175" width="28" height="2" fill="#fef08a" opacity="0.55" />
+
       {/* Hero #10 Striker Dribbling Forward */}
       <g transform="translate(52,88)">
-        {/* Shadow */}
-        <ellipse cx="26" cy="96" rx="22" ry="6" fill="rgba(0,0,0,0.4)" />
-        {/* Back Leg */}
+        <ellipse cx="26" cy="96" rx="22" ry="6" fill="rgba(0,0,0,0.42)" />
         <rect x="8" y="54" width="8" height="18" fill="#f3c19d" />
         <rect x="6" y="70" width="9" height="12" fill="#1d4ed8" />
         <rect x="4" y="81" width="12" height="5" fill="#090d16" />
-        {/* Front Kick Leg */}
         <rect x="29" y="56" width="9" height="16" fill="#f3c19d" />
         <rect x="30" y="70" width="9" height="14" fill="#1d4ed8" />
         <rect x="31" y="83" width="13" height="6" fill="#090d16" />
-        {/* White Shorts */}
         <rect x="10" y="42" width="27" height="16" fill="#0f172a" />
         <rect x="11" y="43" width="25" height="14" fill="#f8fafc" />
         <rect x="14" y="44" width="2" height="12" fill="#2563eb" />
         <rect x="31" y="44" width="2" height="12" fill="#2563eb" />
-        {/* White/Blue #10 Jersey */}
         <rect x="9" y="18" width="28" height="26" fill="#090d16" />
         <rect x="10" y="19" width="26" height="24" fill="#ffffff" />
         <rect x="10" y="19" width="26" height="4" fill="#2563eb" />
@@ -367,11 +397,9 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
         <rect x="35" y="21" width="9" height="11" fill="#ffffff" />
         <rect x="0" y="30" width="6" height="8" fill="#f3c19d" />
         <rect x="40" y="30" width="6" height="8" fill="#f3c19d" />
-        {/* Blue #10 on back/chest */}
         <rect x="16" y="25" width="3" height="13" fill="#1d4ed8" />
         <rect x="22" y="25" width="8" height="13" fill="#1d4ed8" />
         <rect x="25" y="28" width="2" height="7" fill="#ffffff" />
-        {/* Head */}
         <rect x="15" y="2" width="14" height="15" fill="#090d16" />
         <rect x="16" y="3" width="12" height="13" fill="#f3c19d" />
         <rect x="15" y="1" width="14" height="6" fill="#3d2516" />
@@ -391,7 +419,7 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
     </svg>
 
     {/* Club Crest Badge Overlay (Top-Left) */}
-    <div className="absolute top-2 left-2 bg-[#090d16]/85 border border-slate-400 px-2 py-1 flex items-center gap-1.5">
+    <div className="absolute top-2 left-2 bg-[#090d16]/90 border border-slate-300 px-2 py-1 flex items-center gap-1.5 shadow-[2px_2px_0_#000]">
       <PixelClubCrest team="blue" label={clubName.slice(0, 3)} className="w-5 h-6" />
       <span className="text-[11px] font-bold text-white truncate max-w-[140px]">
         {clubName}
@@ -399,9 +427,9 @@ export const MainMenuHeroArtwork: React.FC<{ clubName: string }> = ({ clubName }
     </div>
 
     {/* Bottom Classic Tagline Strip */}
-    <div className="bg-[#0e4b2a] border-t-2 border-[#4ade80]/50 px-3 py-1.5 text-center">
+    <div className="bg-gradient-to-r from-[#0a361e] via-[#0e4d2a] to-[#0a361e] border-t-2 border-[#4ade80]/70 px-3 py-1.5 text-center">
       <span className="font-display text-base sm:text-lg font-bold text-amber-300 tracking-wide drop-shadow-[1px_1px_0_#000]">
-        Футбол. Тактика. Победа!
+        Тактика · Очки хода · Блиц-дуэли!
       </span>
     </div>
   </div>

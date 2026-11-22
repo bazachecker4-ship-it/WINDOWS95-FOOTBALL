@@ -291,84 +291,60 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-3 sm:p-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/22 p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Блиц-дуэль за мяч"
     >
-      <div className="w-full max-w-lg pc-window p-[3px]">
-        {/* Classic Win95 Title Bar */}
-        <div className="pc-titlebar px-2.5 py-1 flex items-center justify-between gap-3">
-          <span className="font-display text-sm sm:text-base font-bold tracking-wide truncate flex items-center gap-1.5">
+      <div className="w-full max-w-lg max-h-[94dvh] flex flex-col bg-[#0d192b]/72 border-t-2 border-l-2 border-white/65 border-r-2 border-b-2 border-black/90 shadow-[6px_6px_0px_rgba(0,0,0,0.45)] p-[3px] text-white">
+        {/* Classic Win95 Title Bar (Semi-Transparent) */}
+        <div className="bg-gradient-to-r from-[#000080]/88 via-[#0d62b3]/88 to-[#1084d0]/88 px-2.5 py-1 flex items-center justify-between gap-3 shrink-0 border-b border-black/60">
+          <span className="font-display text-sm sm:text-base font-bold tracking-wide truncate flex items-center gap-1.5 text-white drop-shadow">
             {isServerDriven && <Globe className="w-3.5 h-3.5 text-sky-300 shrink-0" />}
             <span>
-              {duel.isShotDuel ? "Пенальти! — " : "Блиц-стык! — "}
+              {duel.isShotDuel ? "Удар в створ! — " : "Блиц-дуэль за мяч — "}
               {variantName}
             </span>
           </span>
           {currentTurnLimitMs !== null && (
             <span
-              className={`font-mono text-xs font-bold tabular-nums px-1.5 py-0.5 bg-black/50 border border-white/30 ${
-                timeLeftMs < 1100 ? "text-red-300" : "text-emerald-300"
+              className={`font-mono text-xs font-bold tabular-nums px-1.5 py-0.5 bg-black/55 border border-white/35 shrink-0 ${
+                timeLeftMs < 1100 ? "text-red-300 animate-pulse" : "text-emerald-300"
               }`}
             >
-              Время: {(timeLeftMs / 1000).toFixed(1)}с
+              ⏱ {(timeLeftMs / 1000).toFixed(1)}с
             </span>
           )}
         </div>
 
-        <div className="p-3 space-y-2.5 bg-[#c0c0c0]">
-          {/* Retro Stadium Penalty/Duel Banner (matching Screenshot 1 Пенальти artwork) */}
-          <div className="pc-inset relative h-20 overflow-hidden bg-[#1e3a8a] flex items-end justify-between px-3">
-            <svg
-              viewBox="0 0 300 72"
-              preserveAspectRatio="xMidYMid slice"
-              shapeRendering="crispEdges"
-              className="absolute inset-0 w-full h-full"
-              aria-hidden="true"
-            >
-              <rect width="300" height="24" fill="#1e293b" />
-              <rect y="22" width="300" height="6" fill="#1e3a8a" />
-              <rect y="28" width="300" height="44" fill="#2e9e2b" />
-              <rect y="28" width="300" height="10" fill="#37b233" />
-              <rect y="48" width="300" height="12" fill="#37b233" />
-              {/* Goal Frame */}
-              <rect x="86" y="10" width="128" height="28" fill="#0f172a" opacity="0.45" />
-              <rect x="84" y="8" width="132" height="3" fill="#ffffff" />
-              <rect x="84" y="8" width="3" height="30" fill="#ffffff" />
-              <rect x="213" y="8" width="3" height="30" fill="#ffffff" />
-              {/* Green Keeper */}
-              <rect x="145" y="19" width="10" height="14" fill="#16a34a" />
-              <rect x="147" y="14" width="6" height="5" fill="#f3c19d" />
-              {/* Penalty Spot & White/Red Striker */}
-              <rect x="148" y="54" width="4" height="2" fill="#ffffff" />
-              <rect x="147" y="47" width="6" height="6" fill="#ffffff" />
-            </svg>
-            <div className="relative z-10 bg-black/70 border border-slate-400 px-2 py-0.5 text-[10px] font-bold text-white mb-1">
+        <div className="p-2 sm:p-3 space-y-2 bg-slate-900/48 overflow-y-auto touch-scroll">
+          {/* Translucent Stadium Penalty/Duel Banner */}
+          <div className="hidden min-[520px]:flex [@media(max-height:580px)]:hidden relative h-12 overflow-hidden bg-slate-950/45 border border-white/20 items-center justify-between px-2.5">
+            <div className="relative z-10 bg-black/55 border border-white/30 px-2 py-0.5 text-[10px] font-bold text-slate-100 truncate">
               {variantDesc}
             </div>
-            <div className="relative z-10 bg-[#000080]/90 border border-white/60 px-2 py-0.5 text-[10px] font-bold text-amber-300 mb-1 hidden sm:block">
+            <div className="relative z-10 bg-[#000080]/75 border border-white/40 px-2 py-0.5 text-[10px] font-bold text-amber-300 hidden sm:block shrink-0">
               {reasons[0] || `${size}×${size}`}
             </div>
           </div>
 
-          {/* Segmented Win95 Timer Bar */}
+          {/* Segmented Timer Bar */}
           {currentTurnLimitMs !== null && (
-            <div className="pc-field p-[2px] h-3.5 w-full">
+            <div className="bg-black/45 border border-white/25 p-[2px] h-3 w-full">
               <div
                 className={`h-full transition-[width] duration-75 ${
-                  timeLeftMs < 1100 ? "bg-red-700" : "win95-progress-fill"
+                  timeLeftMs < 1100 ? "bg-red-500" : "bg-emerald-400"
                 }`}
                 style={{ width: `${progressPct}%` }}
               />
             </div>
           )}
 
-          {/* Duelists */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Translucent Duelists */}
+          <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
             {[
-              { piece: initiator, mark: "X" as const, roleDesc: "Инициатор" },
-              { piece: defender, mark: "O" as const, roleDesc: "Соперник" },
+              { piece: initiator, mark: "X" as const, roleDesc: "Атака" },
+              { piece: defender, mark: "O" as const, roleDesc: "Защита" },
             ].map(({ piece, mark, roleDesc }) => {
               const isTurn = !duelStatus.finished && turnMark === mark;
               const isBlue = piece.team === "blue";
@@ -377,17 +353,19 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
               return (
                 <div
                   key={piece.id}
-                  className={`p-2 flex items-center justify-between gap-2 ${
-                    isTurn ? "pc-btn-active" : "pc-inset text-slate-900"
+                  className={`p-1.5 sm:p-2 flex items-center justify-between gap-1.5 sm:gap-2 border ${
+                    isTurn
+                      ? "bg-[#000080]/78 border-amber-300 text-white shadow-md"
+                      : "bg-slate-900/52 border-white/25 text-slate-200"
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                     <div
-                      className={`w-7 h-7 flex items-center justify-center shrink-0 border border-black ${
-                        isBlue ? "bg-blue-700 text-white" : "bg-red-700 text-white"
+                      className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center shrink-0 border border-black/70 ${
+                        isBlue ? "bg-blue-600/85 text-white" : "bg-red-600/85 text-white"
                       }`}
                     >
-                      <ChessPieceIcon role={piece.role} className="w-4 h-4" />
+                      <ChessPieceIcon role={piece.role} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </div>
                     <div className="min-w-0">
                       <div className="text-[11px] font-bold truncate">
@@ -396,26 +374,68 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
                       </div>
                       <div
                         className={`text-[10px] truncate ${
-                          isTurn ? "text-slate-200" : "text-slate-700"
+                          isTurn ? "text-amber-200 font-bold" : "text-slate-300"
                         }`}
                       >
-                        {roleDesc}
+                        {isTurn ? "▶ ХОДИТ" : roleDesc}
                         {bonus > 0 ? ` (+${(bonus / 1000).toFixed(1)}с)` : ""}
                       </div>
                     </div>
                   </div>
-                  <span className="font-display text-lg font-bold shrink-0">{mark}</span>
+                  <span className="font-display text-base sm:text-lg font-bold shrink-0">{mark}</span>
                 </div>
               );
             })}
           </div>
 
-          {/* Recessed CRT Blitz Grid */}
+          {/* Direct Prominent Turn / Result Banner right above Grid */}
           <div
-            className="mx-auto pc-inset-dark p-2.5 grid gap-1.5"
+            className={`px-2.5 py-1.5 border border-white/30 flex items-center justify-between gap-2 text-xs font-bold ${
+              duelStatus.finished
+                ? "bg-emerald-800/80 text-white"
+                : isWaitingForOpponent
+                ? "bg-slate-900/65 text-slate-200"
+                : "bg-[#000080]/78 text-amber-300"
+            }`}
+          >
+            {duelStatus.finished ? (
+              <div className="flex items-center gap-2 w-full justify-center">
+                <SoccerBallIcon className="w-4 h-4 shrink-0" />
+                <span className="truncate">{duelStatus.message}</span>
+              </div>
+            ) : (
+              <>
+                <span className="truncate">
+                  {isSpectator
+                    ? `Эфир: ход (${turnMark})`
+                    : gameMode === "online" && isWaitingForOpponent
+                    ? `Ожидаем ход соперника (${turnMark})...`
+                    : isWaitingForOpponent
+                    ? "ИИ-агент вычисляет ответ..."
+                    : variant === "decay" &&
+                      ((turnMark === "X" && fadingXIdx !== -1) ||
+                        (turnMark === "O" && fadingOIdx !== -1))
+                    ? `ВАШ ХОД (${turnMark}) — старая метка исчезнет`
+                    : `ВАШ ХОД (${turnMark}) — соберите ${winLength} в ряд`}
+                </span>
+                <span className="font-mono text-[11px] bg-black/45 px-1.5 py-0.5 border border-white/25 text-white shrink-0">
+                  {size}×{size} · {winLength} в ряд
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Translucent Blitz Grid (Scaled comfortably for fingers & mouse) */}
+          <div
+            className="mx-auto bg-slate-950/50 border border-white/30 p-2 sm:p-2.5 grid gap-1.5 sm:gap-2"
             style={{
               gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))`,
-              maxWidth: size === 5 ? "300px" : size === 4 ? "270px" : "235px",
+              maxWidth:
+                size === 5
+                  ? "min(90vw, 330px)"
+                  : size === 4
+                  ? "min(86vw, 300px)"
+                  : "min(80vw, 276px)",
             }}
           >
             {board.map((cell, idx) => {
@@ -433,55 +453,31 @@ export const BlitzDuelModal: React.FC<BlitzDuelModalProps> = ({
                   disabled={!canClick}
                   onClick={() => applyMark(idx, turnMark)}
                   aria-label={`Клетка блица ${idx + 1}`}
-                  className={`aspect-square flex items-center justify-center font-display font-bold focus-visible:outline-2 focus-visible:outline-white ${
+                  className={`relative aspect-square min-h-[52px] flex flex-col items-center justify-center font-display font-bold focus-visible:outline-2 focus-visible:outline-white touch-manipulation transition-all ${
                     size === 5 ? "text-2xl" : size === 4 ? "text-3xl" : "text-4xl"
                   } ${
                     isBlocked
-                      ? "bg-slate-800 border-2 border-slate-700 text-slate-500 cursor-not-allowed"
+                      ? "bg-slate-800/55 border-2 border-slate-600/60 text-slate-400 cursor-not-allowed"
                       : isWinCell
-                      ? "bg-emerald-700 border-2 border-emerald-300 text-white"
+                      ? "bg-emerald-600/80 border-2 border-emerald-200 text-white"
                       : cell !== null
-                      ? `pc-inset-dark ${isFading ? "opacity-45" : ""}`
+                      ? `bg-slate-900/62 border border-white/25 ${isFading ? "opacity-55 border-amber-400" : ""}`
                       : canClick
-                      ? "pc-btn cursor-pointer"
-                      : "bg-slate-900 border border-slate-700 cursor-default"
+                      ? "bg-white/20 hover:bg-white/35 border-t-2 border-l-2 border-white/70 border-r-2 border-b-2 border-black/75 cursor-pointer active:scale-95"
+                      : "bg-slate-900/45 border border-white/15 cursor-default"
                   }`}
                 >
-                  {isBlocked && <ShieldAlert className="w-5 h-5 text-slate-400" />}
-                  {cell === "X" && <span className="text-sky-400">X</span>}
-                  {cell === "O" && <span className="text-amber-300">O</span>}
+                  {isBlocked && <ShieldAlert className="w-5 h-5 text-slate-300" />}
+                  {cell === "X" && <span className="text-sky-300 drop-shadow leading-none">X</span>}
+                  {cell === "O" && <span className="text-amber-300 drop-shadow leading-none">O</span>}
+                  {isFading && cell !== null && (
+                    <span className="font-mono text-[8px] leading-none text-amber-300 uppercase mt-0.5">
+                      исчезнет
+                    </span>
+                  )}
                 </button>
               );
             })}
-          </div>
-
-          {/* Status Footer */}
-          <div className="pc-inset px-2.5 py-1.5 flex items-center justify-between gap-2 text-xs font-medium text-slate-900">
-            {duelStatus.finished ? (
-              <div className="flex items-center gap-2 text-emerald-900 font-bold w-full justify-center">
-                <SoccerBallIcon className="w-4 h-4 shrink-0" />
-                <span>{duelStatus.message}</span>
-              </div>
-            ) : (
-              <>
-                <span className="truncate">
-                  {isSpectator
-                    ? `Эфир: ход (${turnMark})`
-                    : gameMode === "online" && isWaitingForOpponent
-                    ? `Ожидаем ход соперника (${turnMark})...`
-                    : isWaitingForOpponent
-                    ? "ИИ-агент вычисляет ход..."
-                    : variant === "decay" &&
-                      ((turnMark === "X" && fadingXIdx !== -1) ||
-                        (turnMark === "O" && fadingOIdx !== -1))
-                    ? `Ход (${turnMark}) — старая метка исчезнет`
-                    : `Ваш ход (${turnMark}) — соберите ${winLength} в ряд`}
-                </span>
-                <span className="font-mono font-bold shrink-0">
-                  {size}×{size}
-                </span>
-              </>
-            )}
           </div>
         </div>
       </div>

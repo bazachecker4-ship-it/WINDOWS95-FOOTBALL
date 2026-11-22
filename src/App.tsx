@@ -12,14 +12,17 @@ import {
   CameraPreset,
   CommentaryItem,
   FloatingCallout,
+  FormationId,
   GameMode,
   GamePhase,
   LiveMatchSummary,
   MAX_TURNS,
+  MatchMistakeEvent,
   MatchStats,
   MatchTelemetryStats,
   PITCH_COLS,
   PitchType,
+  PlayerActionMode,
   PlayerPiece,
   PlayerRole,
   Position,
@@ -34,11 +37,17 @@ import {
 } from "./types/game";
 import {
   applyDynamicOffBallRuns,
+  applyTeamFormation,
   computeBestTacticalMove,
   computeDuelBonusTimes,
+  computePlayerTurnBudget,
+  computeSituationalTurnTime,
+  computeTacticalPressure,
   createInitialFormation,
   findSafeKnockbackSquare,
+  getPassApCost,
   getQuickSwitchCandidates,
+  getShotApCost,
   getShotOptions,
   getValidMoves,
   getValidPasses,
@@ -53,7 +62,7 @@ import {
   updateRoleAppearance,
   upgradeRoleStat,
 } from "./engine/progression";
-import { PixiPitchCanvas } from "./pixi/PixiPitchCanvas";
+import { ThreePitchCanvas } from "./components/ThreePitchCanvas";
 import { BlitzDuelModal } from "./components/BlitzDuelModal";
 import { OverlayHUD } from "./components/OverlayHUD";
 import { SquadModal } from "./components/SquadModal";
@@ -95,6 +104,8 @@ function emptyMatchStats(): MatchStats {
     moves: 0,
     passes: 0,
     shots: 0,
+    offsides: 0,
+    turnTimeouts: 0,
     blitzPlayed: 0,
     blitzWon: 0,
     blitzTimeouts: 0,
@@ -299,6 +310,7 @@ export default function App() {
       }
       setOnlineMatchId(null);
       setLocalAiDerby(false);
+      setShowMatchHudPanels(false);
       mpClient.joinSpectate(match.id);
       triggerBanner(`👁️ Подключение к трансляции: ${match.roomName}...`, "gold");
     },
@@ -372,13 +384,20 @@ export default function App() {
   const [winner, setWinner] = useState<Team | "draw" | null>(null);
 
   const [mentality, setMentality] = useState<TacticalMentality>("balance");
+  const [activeFormation, setActiveFormation] = useState<FormationId>("4-3-3");
   const [momentum, setMomentum] = useState(0);
   const [comboStreak, setComboStreak] = useState(0);
   const [superDriveReady, setSuperDriveReady] = useState(false);
-  const [actionPoints, setActionPoints] = useState(6);
-  const [maxActionPoints, setMaxActionPoints] = useState(6);
+  const [spentApThisTurn, setSpentApThisTurn] = useState(0);
+  const [lockedTurnBudget, setLockedTurnBudget] = useState<number | null>(null);
   const [turnTimeLeft, setTurnTimeLeft] = useState(20);
+  const [maxTurnTime, setMaxTurnTime] = useState(20);
   const [showActionPopover, setShowActionPopover] = useState(false);
+  const [playerActionMode, setPlayerActionMode] = useState<PlayerActionMode | null>(null);
+  const [mistakeLog, setMistakeLog] = useState<MatchMistakeEvent[]>([]);
+  const [isHalftimeCoach, setIsHalftimeCoach] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showMatchHudPanels, setShowMatchHudPanels] = useState(false);
   const [ballFlight, setBallFlight] = useState<BallFlightEvent | null>(null);
   const [floatingCallout, setFloatingCallout] = useState<FloatingCallout | null>(null);
   const [broadcastBanner, setBroadcastBanner] = useState<{
@@ -395,25 +414,51 @@ export default function App() {
   const moveCounterRef = useRef(0);
   const flightNonceRef = useRef(0);
   const matchRewardedRef = useRef(false);
+  const halftimeTriggeredRef = useRef(false);
 
   useEffect(() => {
     saveSquadProgression(progression);
   }, [progression]);
 
+  const recordMistake = useCallback(
+    (
+      playerLabel: string,
+      type: MatchMistakeEvent["type"],
+      detail: string,
+      turnNum: number
+    ) => {
+      const entry: MatchMistakeEvent = {
+        id: `mk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        turn: turnNum,
+        playerLabel,
+        type,
+        detail,
+      };
+      setMistakeLog((prev) => [entry, ...prev].slice(0, 24));
+    },
+    []
+  );
+
+  // Reset turn AP & situational turn timer cleanly at the start of every turn
   useEffect(() => {
     if (phase !== "PLAYING") return;
-    setTurnTimeLeft(20);
-    setActionPoints(6);
-    setMaxActionPoints(6);
+    const sec = computeSituationalTurnTime(ball, blitzPace);
+    setMaxTurnTime(sec);
+    setTurnTimeLeft(sec);
+    setSpentApThisTurn(0);
+    setLockedTurnBudget(null);
+    setPlayerActionMode(null);
     setShowActionPopover(false);
+  }, [currentTurn, turnCount, phase]);
+
+  // Live 1s situational timer countdown (pauses automatically while modal windows are open)
+  useEffect(() => {
+    if (phase !== "PLAYING" || hasVisibleModalWindow) return;
     const timer = window.setInterval(() => {
-      setTurnTimeLeft((prev) => {
-        if (prev <= 1) return 0;
-        return prev - 1;
-      });
+      setTurnTimeLeft((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [currentTurn, turnCount, phase]);
+  }, [phase, hasVisibleModalWindow]);
 
   const clearTimers = () => {
     if (goalTimerRef.current !== null) {
@@ -657,6 +702,44 @@ export default function App() {
     superDriveReady,
   ]);
 
+  const selectedPlayerBudget = useMemo(
+    () => computePlayerTurnBudget(selectedPlayer, progression, difficulty, mentality),
+    [selectedPlayer, progression, difficulty, mentality]
+  );
+  const maxActionPoints = lockedTurnBudget ?? selectedPlayerBudget;
+  const actionPoints = Math.max(0, maxActionPoints - spentApThisTurn);
+
+  const moveMinCost = useMemo(() => {
+    const nonClash = validMoves.filter((m) => m.kind !== "clash");
+    if (nonClash.length === 0) return 1;
+    return Math.min(...nonClash.map((m) => m.apCost ?? 1));
+  }, [validMoves]);
+
+  const passCost = useMemo(
+    () => (selectedPlayer ? getPassApCost(selectedPlayer, progression, difficulty) : 2),
+    [selectedPlayer, progression, difficulty]
+  );
+
+  const shotCost = useMemo(
+    () => getShotApCost(superDriveReady && currentTurn === "blue"),
+    [superDriveReady, currentTurn]
+  );
+
+  const hasClashTarget = useMemo(
+    () => validMoves.some((m) => m.kind === "clash"),
+    [validMoves]
+  );
+
+  const canSelectedMove = useMemo(
+    () => validMoves.some((m) => m.kind !== "clash"),
+    [validMoves]
+  );
+
+  const selectedPressure = useMemo(
+    () => (selectedPlayer ? computeTacticalPressure(selectedPlayer, players) : null),
+    [selectedPlayer, players]
+  );
+
   const coachHint = useMemo(() => {
     if (!showCoachHint || !isHumanTurn) return null;
     return computeBestTacticalMove(
@@ -720,13 +803,79 @@ export default function App() {
         return;
       }
 
+      // Halftime break at start of 2nd half (turn 19 of 36)
+      if (
+        nextTurnNum === Math.floor(MAX_TURNS / 2) + 1 &&
+        !halftimeTriggeredRef.current &&
+        gameMode !== "online" &&
+        !isSpectating
+      ) {
+        halftimeTriggeredRef.current = true;
+        setPlayers((prev) =>
+          prev.map((pl) => ({ ...pl, stamina: Math.min(100, (pl.stamina ?? 100) + 25) }))
+        );
+        setIsHalftimeCoach(true);
+        openWindow("coach");
+        soundFX.playWhistle();
+        triggerBanner("ПЕРЕРЫВ! Разбор 1-го тайма от Groq ИИ-тренера", "gold");
+      }
+
       setTurnCount(nextTurnNum);
       const nextTeam: Team = currentTurnTeam === "blue" ? "red" : "blue";
       setCurrentTurn(nextTeam);
       setSelectedPlayerId(null);
+      setPlayerActionMode(null);
+      setShowActionPopover(false);
     },
-    [pitchType, pushCommentary, finalizeMatchRewards]
+    [pitchType, pushCommentary, finalizeMatchRewards, gameMode, isSpectating, openWindow, triggerBanner]
   );
+
+  // Enforce situational turn deadline during human turns
+  useEffect(() => {
+    if (
+      phase !== "PLAYING" ||
+      !isHumanTurn ||
+      hasVisibleModalWindow ||
+      gameMode === "online" ||
+      turnTimeLeft > 0
+    ) {
+      return;
+    }
+
+    const activeLabel = selectedPlayer
+      ? `${ROLE_META[selectedPlayer.role].code} #${selectedPlayer.number}`
+      : "Команда";
+    const nextStats: MatchStats = {
+      ...matchStats,
+      turnTimeouts: matchStats.turnTimeouts + 1,
+    };
+    setMatchStats(nextStats);
+    recordMistake(
+      activeLabel,
+      "timeout",
+      `Таймер хода истёк на ${turnCount}-м ходу (${maxTurnTime}с).`,
+      turnCount
+    );
+    soundFX.playWhistle();
+    triggerBanner("⏱ Время хода вышло! Право хода переходит сопернику.", "red");
+    advanceTurnOrEndMatch(scoreBlue, scoreRed, currentTurn, turnCount, nextStats);
+  }, [
+    turnTimeLeft,
+    phase,
+    isHumanTurn,
+    hasVisibleModalWindow,
+    gameMode,
+    selectedPlayer,
+    matchStats,
+    turnCount,
+    maxTurnTime,
+    recordMistake,
+    triggerBanner,
+    advanceTurnOrEndMatch,
+    scoreBlue,
+    scoreRed,
+    currentTurn,
+  ]);
 
   // FIFA Mobile Quick-Flow: Auto-focus ball carrier OR closest defender when your turn begins
   useEffect(() => {
@@ -793,6 +942,41 @@ export default function App() {
     [scoreBlue, scoreRed, turnCount, pitchType, pushCommentary, finalizeMatchRewards]
   );
 
+  const consumeTurnAp = useCallback(
+    (actor: PlayerPiece, apCost: number, focusPlayerId: string): boolean => {
+      const isHumanActing =
+        gameMode !== "online" &&
+        !isSpectating &&
+        (gameMode === "local" || actor.team === "blue");
+      if (!isHumanActing) return false;
+
+      const baseBudget =
+        lockedTurnBudget ?? computePlayerTurnBudget(actor, progression, difficulty, mentality);
+      const nextSpent = spentApThisTurn + apCost;
+      const remaining = Math.max(0, baseBudget - nextSpent);
+      if (remaining >= 1) {
+        if (lockedTurnBudget === null) setLockedTurnBudget(baseBudget);
+        setSpentApThisTurn(nextSpent);
+        setSelectedPlayerId(focusPlayerId);
+        setPlayerActionMode(null);
+        setShowActionPopover(false);
+        triggerBanner(`Осталось ${remaining} AP — продолжайте комбинацию или нажмите «Ход →»`, actor.team);
+        return true;
+      }
+      return false;
+    },
+    [
+      gameMode,
+      isSpectating,
+      lockedTurnBudget,
+      progression,
+      difficulty,
+      mentality,
+      spentApThisTurn,
+      triggerBanner,
+    ]
+  );
+
   const executeMove = useCallback(
     (player: PlayerPiece, targetPos: Position) => {
       if (gameMode === "online" && onlineMatchId) {
@@ -817,6 +1001,22 @@ export default function App() {
       );
       const chosen = moves.find((m) => samePos(m.pos, targetPos));
       if (!chosen) return;
+
+      const apCost = chosen.apCost ?? 1;
+      const isHumanActor = gameMode === "local" || player.team === "blue";
+      if (isHumanActor && !isSpectating && apCost > actionPoints) {
+        triggerBanner(`Недостаточно AP (нужно ${apCost} AP, осталось ${actionPoints})`, "red");
+        return;
+      }
+
+      if (player.team === "blue" && (player.stamina ?? 100) < 30) {
+        recordMistake(
+          `${ROLE_META[player.role].code} #${player.number}`,
+          "fatigue",
+          "Рывок на критически низкой выносливости (<30%).",
+          turnCount
+        );
+      }
 
       let nextStats = matchStats;
       if (player.team === "blue") {
@@ -843,6 +1043,8 @@ export default function App() {
         );
         soundFX.playBlitzStart();
         setSelectedPlayerId(null);
+        setPlayerActionMode(null);
+        setShowActionPopover(false);
         setActiveDuel({
           initiatorId: player.id,
           defenderId: defender.id,
@@ -930,6 +1132,10 @@ export default function App() {
         }
       }
 
+      if (consumeTurnAp(player, apCost, player.id)) {
+        return;
+      }
+
       advanceTurnOrEndMatch(scoreBlue, scoreRed, player.team, turnCount, nextStats);
     },
     [
@@ -941,6 +1147,9 @@ export default function App() {
       blitzModePref,
       progression,
       difficulty,
+      isSpectating,
+      actionPoints,
+      recordMistake,
       matchStats,
       mentality,
       momentum,
@@ -949,6 +1158,7 @@ export default function App() {
       scoreRed,
       turnCount,
       pushCommentary,
+      consumeTurnAp,
       advanceTurnOrEndMatch,
       triggerBanner,
       triggerCallout,
@@ -970,6 +1180,57 @@ export default function App() {
 
       const receiver = players.find((p) => p.id === receiverId);
       if (!receiver || ball.carrierId !== passer.id) return;
+
+      const passOptions = getValidPasses(
+        passer,
+        players,
+        ball,
+        pitchType,
+        progression,
+        difficulty
+      );
+      const chosenPass = passOptions.find((o) => o.targetPlayerId === receiverId);
+      const apCost = chosenPass?.apCost ?? getPassApCost(passer, progression, difficulty);
+
+      const isHumanActor = gameMode === "local" || passer.team === "blue";
+      if (isHumanActor && !isSpectating && apCost > actionPoints) {
+        triggerBanner(`Недостаточно AP для паса (нужно ${apCost} AP, осталось ${actionPoints})`, "red");
+        return;
+      }
+
+      if (chosenPass?.isOffside) {
+        const nextStats: MatchStats =
+          passer.team === "blue"
+            ? { ...matchStats, offsides: matchStats.offsides + 1 }
+            : matchStats;
+        if (passer.team === "blue") {
+          setMatchStats(nextStats);
+        }
+        recordMistake(
+          `${ROLE_META[receiver.role].code} #${receiver.number}`,
+          "offside",
+          `Положение вне игры при передаче от ${ROLE_META[passer.role].code} #${passer.number}.`,
+          turnCount
+        );
+        soundFX.playWhistle();
+        triggerCallout(receiver.pos, "ОФСАЙД!", 0xef4444);
+        triggerBanner("🚩 ОФСАЙД! Мяч переходит защитнику соперника.", "red");
+
+        const oppDef = players
+          .filter((p) => p.team !== passer.team)
+          .sort(
+            (a, b) =>
+              Math.hypot(a.pos.col - receiver.pos.col, a.pos.row - receiver.pos.row) -
+              Math.hypot(b.pos.col - receiver.pos.col, b.pos.row - receiver.pos.row)
+          )[0];
+        if (oppDef) {
+          setBall({ pos: oppDef.pos, carrierId: oppDef.id });
+        }
+        setShowActionPopover(false);
+        setPlayerActionMode(null);
+        advanceTurnOrEndMatch(scoreBlue, scoreRed, passer.team, turnCount, nextStats);
+        return;
+      }
 
       let nextStats = matchStats;
       if (passer.team === "blue") {
@@ -1005,7 +1266,17 @@ export default function App() {
       );
       setPlayers(dynamicPlayers);
       setBall(updatedBall);
-      triggerCallout(receiver.pos, dist > 7 ? "ДИАГОНАЛЬ!" : "ПАС!", 0xfbbf24);
+      const pressureBeforePass = computeTacticalPressure(passer, players);
+      const brokeBlock = pressureBeforePass.frontBlockers >= 2 && apCost > 1;
+      const effectiveApCost = brokeBlock ? apCost - 1 : apCost;
+
+      if (brokeBlock && passer.team === "blue") {
+        triggerCallout(receiver.pos, "ПРОРЕЗАЛ БЛОК +1 AP!", 0x38bdf8);
+      } else if (chosenPass?.isKeyPass) {
+        triggerCallout(receiver.pos, "ГОЛЕВОЙ ПАС!", 0x34d399);
+      } else {
+        triggerCallout(receiver.pos, dist > 7 ? "ДИАГОНАЛЬ!" : "ПАС!", 0xfbbf24);
+      }
 
       pushCommentary({
         eventType: "pass",
@@ -1027,7 +1298,9 @@ export default function App() {
           triggerBanner("СУПЕР-ДРАЙВ: БЫСТРАЯ СТЕНОЧКА!", "gold");
           return;
         }
-        const nextMom = Math.min(100, momentum + 30);
+        const momGain =
+          (pressureBeforePass.frontBlockers >= 2 ? 40 : 30) + (chosenPass?.isKeyPass ? 10 : 0);
+        const nextMom = Math.min(100, momentum + momGain);
         setMomentum(nextMom);
         setComboStreak((c) => c + 1);
         if (nextMom >= 100) {
@@ -1038,6 +1311,10 @@ export default function App() {
         }
       }
 
+      if (consumeTurnAp(passer, effectiveApCost, receiver.id)) {
+        return;
+      }
+
       advanceTurnOrEndMatch(scoreBlue, scoreRed, passer.team, turnCount, nextStats);
     },
     [
@@ -1045,8 +1322,13 @@ export default function App() {
       onlineMatchId,
       players,
       ball,
-      matchStats,
       pitchType,
+      progression,
+      difficulty,
+      isSpectating,
+      actionPoints,
+      matchStats,
+      recordMistake,
       mentality,
       momentum,
       superDriveReady,
@@ -1054,6 +1336,7 @@ export default function App() {
       scoreRed,
       turnCount,
       pushCommentary,
+      consumeTurnAp,
       advanceTurnOrEndMatch,
       triggerBanner,
       triggerCallout,
@@ -1086,6 +1369,13 @@ export default function App() {
       );
       const shot = shots.find((s) => s.goalRow === goalRow);
       if (!shot) return;
+
+      const apCost = shot.apCost ?? getShotApCost(useSuperShot);
+      const isHumanActor = gameMode === "local" || shooter.team === "blue";
+      if (isHumanActor && !isSpectating && apCost > actionPoints) {
+        triggerBanner(`Недостаточно AP для удара (нужно ${apCost} AP, осталось ${actionPoints})`, "red");
+        return;
+      }
 
       if (useSuperShot) {
         setSuperDriveReady(false);
@@ -1142,13 +1432,24 @@ export default function App() {
         difficulty
       );
       const superBonus = useSuperShot ? 1000 : 0;
+      const tikiTakaBonusMs =
+        shooter.team === "blue" && comboStreak >= 2 ? Math.min(900, comboStreak * 300) : 0;
+      const hasComboBoost = tikiTakaBonusMs > 0;
 
       soundFX.playBlitzStart();
       triggerBanner(
-        useSuperShot ? "СУПЕР-УДАР ПО ВОРОТАМ!" : "ОПАСНЫЙ УДАР! ДУЭЛЬ С ВРАТАРЁМ!",
-        useSuperShot ? "gold" : shooter.team === "blue" ? "blue" : "red"
+        useSuperShot
+          ? "СУПЕР-УДАР ПО ВОРОТАМ!"
+          : hasComboBoost
+          ? `ТИКИ-ТАКА ×${comboStreak}: УДАР В СТВОР!`
+          : keeper.role === "GK"
+          ? "ОПАСНЫЙ УДАР! ДУЭЛЬ С ВРАТАРЁМ!"
+          : "УДАР ЧЕРЕЗ ЗАСЛОН ЗАЩИТНИКА!",
+        useSuperShot || hasComboBoost ? "gold" : shooter.team === "blue" ? "blue" : "red"
       );
       setSelectedPlayerId(null);
+      setPlayerActionMode(null);
+      setShowActionPopover(false);
       setActiveDuel({
         initiatorId: shooter.id,
         defenderId: keeper.id,
@@ -1159,7 +1460,7 @@ export default function App() {
         goalRow,
         complexity: shot.complexity,
         ballOwnerBeforeId: shooter.id,
-        bonusTimeMsBlue: blueBonusMs + superBonus,
+        bonusTimeMsBlue: blueBonusMs + superBonus + tikiTakaBonusMs,
         bonusTimeMsRed: redBonusMs,
       });
       setPhase("BLITZ_DUEL");
@@ -1187,7 +1488,10 @@ export default function App() {
       blitzModePref,
       progression,
       difficulty,
+      isSpectating,
+      actionPoints,
       superDriveReady,
+      comboStreak,
       matchStats,
       scoreBlue,
       scoreRed,
@@ -1216,6 +1520,27 @@ export default function App() {
       };
       setMatchStats(nextStats);
 
+      if (wasTimeout && initiator) {
+        const blueActor = initiator.team === "blue" ? initiator : defender;
+        if (blueActor) {
+          recordMistake(
+            `${ROLE_META[blueActor.role].code} #${blueActor.number}`,
+            "blitz_timeout",
+            "Просрочен таймер в блиц-дуэли за мяч.",
+            turnCount
+          );
+        }
+      } else if (winnerTeam === "red" && initiator?.team === "blue") {
+        recordMistake(
+          `${ROLE_META[initiator.role].code} #${initiator.number}`,
+          "blitz_lost",
+          duel.isShotDuel
+            ? "Проигран выход один на один с вратарём."
+            : "Потеря мяча в проигранном стыке.",
+          turnCount
+        );
+      }
+
       if (!initiator || !defender) {
         setPhase("PLAYING");
         return;
@@ -1227,8 +1552,17 @@ export default function App() {
           return;
         }
         soundFX.playSave();
-        triggerCallout(defender.pos, "СЕЙВ!", 0x38bdf8);
-        triggerBanner("ФЕНОМЕНАЛЬНЫЙ СЕЙВ ВРАТАРЯ!", defender.team === "blue" ? "blue" : "red");
+        const isKeeper = defender.role === "GK";
+        triggerCallout(defender.pos, isKeeper ? "СЕЙВ!" : "БЛОК УДАРА!", 0x38bdf8);
+        triggerBanner(
+          isKeeper
+            ? "ФЕНОМЕНАЛЬНЫЙ СЕЙВ ВРАТАРЯ!"
+            : `${ROLE_META[defender.role].code} #${defender.number} НАКРЫЛ УДАР!`,
+          defender.team === "blue" ? "blue" : "red"
+        );
+        if (defender.team === "blue") {
+          setMomentum((m) => Math.min(100, m + 20));
+        }
         setBall({ pos: defender.pos, carrierId: defender.id });
         setPhase("PLAYING");
         pushCommentary({
@@ -1709,25 +2043,95 @@ export default function App() {
     advanceTurnOrEndMatch,
   ]);
 
-  const tryEnterFullscreen = async () => {
+  const pendingLandscapeFullscreenRef = useRef(false);
+
+  const tryEnterFullscreen = useCallback(async () => {
     try {
-      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
+      const docEl = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      const fsEl =
+        document.fullscreenElement ||
+        (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement;
+      if (!fsEl) {
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+          pendingLandscapeFullscreenRef.current = false;
+        } else if (docEl.webkitRequestFullscreen) {
+          await docEl.webkitRequestFullscreen();
+          pendingLandscapeFullscreenRef.current = false;
+        }
+      }
+    } catch {
+      // Browser blocked non-gesture fullscreen; arm next tap in landscape to enter seamlessly
+      if (window.matchMedia?.("(orientation: landscape)").matches) {
+        pendingLandscapeFullscreenRef.current = true;
+      }
+    }
+  }, []);
+
+  const handleToggleFullscreen = useCallback(async () => {
+    try {
+      const doc = document as Document & {
+        webkitFullscreenElement?: Element | null;
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      const fsEl = document.fullscreenElement || doc.webkitFullscreenElement;
+      if (fsEl) {
+        pendingLandscapeFullscreenRef.current = false;
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
+      } else {
+        await tryEnterFullscreen();
       }
     } catch {
       // Ignored in restricted sandbox iframes
     }
-  };
+  }, [tryEnterFullscreen]);
 
   useEffect(() => {
-    const handleOrientationOrResize = () => {
-      tryEnterFullscreen();
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    const onFsChange = () => {
+      const active = Boolean(document.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFullscreen(active);
+      if (active) pendingLandscapeFullscreenRef.current = false;
     };
-    window.addEventListener("orientationchange", handleOrientationOrResize);
+
+    const handleOrientationCheck = () => {
+      const isLandscape =
+        window.matchMedia?.("(orientation: landscape)").matches ||
+        window.innerWidth > window.innerHeight + 60;
+      if (isLandscape) {
+        pendingLandscapeFullscreenRef.current = true;
+        void tryEnterFullscreen();
+      } else {
+        pendingLandscapeFullscreenRef.current = false;
+      }
+    };
+
+    const onGestureRetry = () => {
+      if (pendingLandscapeFullscreenRef.current) {
+        void tryEnterFullscreen();
+      }
+    };
+
+    const landscapeMq = window.matchMedia?.("(orientation: landscape)");
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    window.addEventListener("orientationchange", handleOrientationCheck);
+    screen.orientation?.addEventListener?.("change", handleOrientationCheck);
+    landscapeMq?.addEventListener?.("change", handleOrientationCheck);
+    window.addEventListener("pointerdown", onGestureRetry, { passive: true });
+
     return () => {
-      window.removeEventListener("orientationchange", handleOrientationOrResize);
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+      window.removeEventListener("orientationchange", handleOrientationCheck);
+      screen.orientation?.removeEventListener?.("change", handleOrientationCheck);
+      landscapeMq?.removeEventListener?.("change", handleOrientationCheck);
+      window.removeEventListener("pointerdown", onGestureRetry);
     };
-  }, []);
+  }, [tryEnterFullscreen]);
 
   const startNewMatch = useCallback(
     (
@@ -1757,6 +2161,7 @@ export default function App() {
       setAiEngine(engine);
       setLocalAiDerby(localDerby);
       matchRewardedRef.current = false;
+      halftimeTriggeredRef.current = false;
       const reset = createInitialFormation();
       setIsSpectating(spectate);
       setGameMode(mode);
@@ -1771,6 +2176,12 @@ export default function App() {
       setTurnCount(1);
       setCurrentTurn("blue");
       setMatchStats(emptyMatchStats());
+      setMistakeLog([]);
+      setIsHalftimeCoach(false);
+      setSpentApThisTurn(0);
+      setLockedTurnBudget(null);
+      setPlayerActionMode(null);
+      setShowActionPopover(false);
       setLastMatchReward(null);
       setSelectedPlayerId(null);
       setActiveDuel(null);
@@ -1784,6 +2195,7 @@ export default function App() {
       setCommentaryLog([]);
       setOpenWindows([]);
       setMinimizedWindows([]);
+      setShowMatchHudPanels(false);
       setPhase("PLAYING");
       soundFX.playWhistle();
 
@@ -1823,15 +2235,65 @@ export default function App() {
       setShowActionPopover((prev) => !prev);
     } else {
       setSelectedPlayerId(playerId);
+      setPlayerActionMode(null);
       setShowActionPopover(true);
     }
   };
 
+  const handleSelectActionMode = useCallback(
+    (action: PlayerActionMode) => {
+      if (!isHumanTurn || !selectedPlayer) return;
+      setPlayerActionMode((prev) => (prev === action ? null : action));
+      setShowActionPopover(false);
+      if (action === "pass") {
+        triggerBanner("Выберите подсвеченного партнёра для паса", "blue");
+      } else if (action === "shoot") {
+        triggerBanner("Выберите зону в створе ворот для удара", "gold");
+      } else if (action === "tackle") {
+        triggerBanner("Нажмите на оранжевую клетку с соперником для блиц-отбора", "red");
+      } else {
+        triggerBanner("Выберите зелёную или голубую клетку для перемещения", "blue");
+      }
+    },
+    [isHumanTurn, selectedPlayer, triggerBanner]
+  );
+
+  const handleEndTurn = useCallback(() => {
+    if (!isHumanTurn || gameMode === "online") return;
+    setShowActionPopover(false);
+    setPlayerActionMode(null);
+    advanceTurnOrEndMatch(scoreBlue, scoreRed, currentTurn, turnCount, matchStats);
+  }, [
+    isHumanTurn,
+    gameMode,
+    advanceTurnOrEndMatch,
+    scoreBlue,
+    scoreRed,
+    currentTurn,
+    turnCount,
+    matchStats,
+  ]);
+
+  const handleApplyFormation = useCallback(
+    (formationId: FormationId) => {
+      setActiveFormation(formationId);
+      setPlayers((prev) => applyTeamFormation(prev, "blue", formationId, ball, pitchType));
+      soundFX.playMove();
+      triggerBanner(`Схема команды перестроена: ${formationId}`, "blue");
+    },
+    [ball, pitchType, triggerBanner]
+  );
+
   const handleCellClick = (pos: Position) => {
     if (!isHumanTurn || !selectedPlayer) return;
     const isValid = validMoves.some((m) => samePos(m.pos, pos));
-    if (isValid) executeMove(selectedPlayer, pos);
-    else setSelectedPlayerId(null);
+    if (isValid) {
+      executeMove(selectedPlayer, pos);
+    } else {
+      setSelectedPlayerId(null);
+      setPlayerActionMode(null);
+      setShowActionPopover(false);
+    }
   };
 
   const handlePassToPlayer = (targetId: string) => {
@@ -1941,6 +2403,8 @@ export default function App() {
         }
       } else if (e.key === "Escape") {
         setSelectedPlayerId(null);
+      } else if (e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р") {
+        setShowMatchHudPanels((v) => !v);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1970,7 +2434,7 @@ export default function App() {
 
   return (
     <main className="relative w-screen h-dvh overflow-hidden win95-desktop">
-      <PixiPitchCanvas
+      <ThreePitchCanvas
         players={players}
         ball={ball}
         pitchType={pitchType}
@@ -1992,9 +2456,18 @@ export default function App() {
         onChangeCameraPreset={setCameraPreset}
         crtEnabled={crtEnabled}
         onToggleCrt={() => setCrtEnabled((v) => !v)}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={handleToggleFullscreen}
         onlineCount={lobbyState.onlineUsers.length}
         onOpenLobby={() => openWindow("lobby")}
         hideHudWidgets={phase === "TITLE_MENU"}
+        showExtendedHud={showMatchHudPanels}
+        actionMode={playerActionMode}
+        actionPoints={actionPoints}
+        pressureState={selectedPressure}
+        scoreBlue={scoreBlue}
+        scoreRed={scoreRed}
+        turnCount={turnCount}
         onSelectPlayer={handleSelectPlayer}
         onCellClick={handleCellClick}
         onPassToPlayer={handlePassToPlayer}
@@ -2003,6 +2476,8 @@ export default function App() {
 
       <OverlayHUD
         phase={phase}
+        showMatchHudPanels={showMatchHudPanels}
+        onToggleMatchHudPanels={() => setShowMatchHudPanels((v) => !v)}
         scoreBlue={scoreBlue}
         scoreRed={scoreRed}
         turnCount={turnCount}
@@ -2029,9 +2504,9 @@ export default function App() {
         comboStreak={comboStreak}
         superDriveReady={superDriveReady}
         broadcastBanner={broadcastBanner}
-        canQuickPass={validPasses.length > 0}
-        canQuickShot={validShots.length > 0}
-        canAutoMove={isHumanTurn}
+        canQuickPass={validPasses.length > 0 && actionPoints >= passCost}
+        canQuickShot={validShots.length > 0 && actionPoints >= shotCost}
+        canAutoMove={isHumanTurn && actionPoints >= 1}
         isHumanTurn={isHumanTurn}
         isSpectating={isSpectating}
         quickSwitchPlayers={quickSwitchPlayers}
@@ -2051,8 +2526,22 @@ export default function App() {
         actionPoints={actionPoints}
         maxActionPoints={maxActionPoints}
         turnTimeLeft={turnTimeLeft}
+        maxTurnTime={maxTurnTime}
+        actionMode={playerActionMode}
+        moveMinCost={moveMinCost}
+        passCost={passCost}
+        shotCost={shotCost}
+        hasClashTarget={hasClashTarget}
+        canSelectedMove={canSelectedMove}
+        pressureState={selectedPressure}
         showActionPopover={showActionPopover}
         onToggleActionPopover={setShowActionPopover}
+        onSelectActionMode={handleSelectActionMode}
+        onEndTurn={handleEndTurn}
+        activeFormation={activeFormation}
+        onApplyFormation={handleApplyFormation}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={handleToggleFullscreen}
         openWindows={openWindows}
         minimizedWindows={minimizedWindows}
         activeWindowId={activeWindowId}
@@ -2106,7 +2595,10 @@ export default function App() {
         onChangeAiEngine={setAiEngine}
         onChangeBlitzPace={setBlitzPace}
         onChangeBlitzPref={setBlitzModePref}
-        onSelectQuickPlayer={(id) => setSelectedPlayerId(id)}
+        onSelectQuickPlayer={(id) => {
+          setSelectedPlayerId(id);
+          setPlayerActionMode(null);
+        }}
         onSelectBestDefender={handleSelectBestDefender}
         onCyclePlayer={handleCyclePlayer}
         onQuickPass={handleQuickPass}
@@ -2228,6 +2720,8 @@ export default function App() {
           scoreRed={scoreRed}
           turnCount={turnCount}
           stats={matchStats}
+          mistakes={mistakeLog}
+          isHalftime={isHalftimeCoach}
           progression={progression}
           zIndex={getWindowZ("coach")}
           isActive={activeWindowId === "coach"}
@@ -2237,7 +2731,10 @@ export default function App() {
           onFocus={() => focusWindow("coach")}
           onMinimize={() => minimizeWindow("coach")}
           onOpenSquad={() => openWindow("squad")}
-          onClose={() => closeWindow("coach")}
+          onClose={() => {
+            setIsHalftimeCoach(false);
+            closeWindow("coach");
+          }}
         />
       )}
     </main>

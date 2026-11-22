@@ -8,6 +8,7 @@ import {
   BlitzPace,
   CameraPreset,
   CommentaryItem,
+  FormationId,
   GameMode,
   GamePhase,
   LiveMatchSummary,
@@ -15,6 +16,7 @@ import {
   MatchStats,
   PITCH_META,
   PitchType,
+  PlayerActionMode,
   PlayerPiece,
   ROLE_META,
   ServerMatchSnapshot,
@@ -22,6 +24,7 @@ import {
   TARGET_GOALS,
   TacticalHint,
   TacticalMentality,
+  TacticalPressureState,
   Team,
 } from "../types/game";
 import { UserProfile } from "../engine/profile";
@@ -42,6 +45,7 @@ import {
   BookOpen,
   Bot,
   BrainCircuit,
+  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -58,8 +62,10 @@ import {
   Lightbulb,
   LogOut,
   Maximize,
+  Menu,
   MessageSquare,
   Minimize2,
+  Monitor,
   Play,
   QrCode,
   RefreshCw,
@@ -173,8 +179,24 @@ interface OverlayHUDProps {
   actionPoints: number;
   maxActionPoints: number;
   turnTimeLeft: number;
+  maxTurnTime: number;
+  actionMode: PlayerActionMode | null;
+  moveMinCost: number;
+  passCost: number;
+  shotCost: number;
+  hasClashTarget: boolean;
+  canSelectedMove: boolean;
+  pressureState?: TacticalPressureState | null;
   showActionPopover: boolean;
   onToggleActionPopover: (show: boolean) => void;
+  onSelectActionMode: (action: PlayerActionMode) => void;
+  onEndTurn: () => void;
+  activeFormation: FormationId;
+  onApplyFormation: (formation: FormationId) => void;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
+  showMatchHudPanels?: boolean;
+  onToggleMatchHudPanels?: () => void;
 }
 
 const DIFFICULTY_LABELS: Record<AIDifficulty, string> = {
@@ -313,6 +335,44 @@ const FORMATIONS: Array<{
   },
 ];
 
+const CAMERA_CYCLE_ORDER: CameraPreset[] = ["tv", "wide", "close", "topdown", "opposite"];
+const CAMERA_SHORT_LABELS: Record<CameraPreset, string> = {
+  tv: "ТВ",
+  wide: "Обзор",
+  close: "Зум",
+  topdown: "Верх",
+  opposite: "180°",
+};
+
+function useIsCompactViewport() {
+  const [state, setState] = useState(() => {
+    if (typeof window === "undefined") {
+      return { isCompact: false, isLandscapePhone: false };
+    }
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return {
+      isCompact: w < 768 || h < 520,
+      isLandscapePhone: w >= 560 && h < 520,
+    };
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      setState({
+        isCompact: w < 768 || h < 520,
+        isLandscapePhone: w >= 560 && h < 520,
+      });
+    };
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  return state;
+}
+
 function formatClock(): string {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -402,14 +462,33 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
   actionPoints,
   maxActionPoints,
   turnTimeLeft,
+  maxTurnTime,
+  actionMode,
+  moveMinCost,
+  passCost,
+  shotCost,
+  hasClashTarget,
+  canSelectedMove,
+  pressureState = null,
   showActionPopover,
   onToggleActionPopover,
+  onSelectActionMode,
+  onEndTurn,
+  activeFormation: currentFormationId,
+  onApplyFormation,
+  isFullscreen,
+  onToggleFullscreen: toggleFullscreen,
+  showMatchHudPanels = false,
+  onToggleMatchHudPanels,
 }) => {
+  const { isCompact, isLandscapePhone } = useIsCompactViewport();
   const [startMenuOpen, setStartMenuOpen] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [clockTime, setClockTime] = useState(formatClock);
   const [commentaryExpanded, setCommentaryExpanded] = useState(true);
+  const [playerCardCollapsed, setPlayerCardCollapsed] = useState(false);
   const [quickMatchOpen, setQuickMatchOpen] = useState(false);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
 
   const [setupMode, setSetupMode] = useState<GameMode>(gameMode === "online" ? "ai" : gameMode);
   const [setupDifficulty, setSetupDifficulty] = useState<AIDifficulty>(difficulty);
@@ -419,27 +498,29 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
   const [setupBlitzPref, setSetupBlitzPref] = useState<BlitzModePreference>(blitzModePref);
 
   const [selectedTournamentId, setSelectedTournamentId] = useState(TOURNAMENTS[1].id);
-  const [formationIdx, setFormationIdx] = useState(0);
+  const [formationIdx, setFormationIdx] = useState(() => {
+    const idx = FORMATIONS.findIndex((f) => f.id === currentFormationId);
+    return idx >= 0 ? idx : 0;
+  });
   const [settingsTab, setSettingsTab] = useState<"game" | "graphics" | "sound" | "controls">("game");
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockTime(formatClock()), 20000);
-    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onFsChange);
     return () => {
       window.clearInterval(timer);
-      document.removeEventListener("fullscreenchange", onFsChange);
     };
   }, []);
 
-  const toggleFullscreen = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await document.documentElement.requestFullscreen();
-    } catch {
-      // Ignored in restricted iframes
+  useEffect(() => {
+    const idx = FORMATIONS.findIndex((f) => f.id === currentFormationId);
+    if (idx >= 0) setFormationIdx(idx);
+  }, [currentFormationId]);
+
+  useEffect(() => {
+    if (phase === "TITLE_MENU") {
+      setDockCollapsed(false);
     }
-  };
+  }, [phase]);
 
   const latestCommentary = commentaryLog[0];
   const setupOpen = openWindows.includes("setup");
@@ -645,12 +726,333 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       </>
     );
 
+  const cycleCameraPreset = () => {
+    const idx = CAMERA_CYCLE_ORDER.indexOf(cameraPreset);
+    const next = CAMERA_CYCLE_ORDER[(idx + 1) % CAMERA_CYCLE_ORDER.length];
+    onChangeCameraPreset(next);
+  };
+
   return (
     <>
       {/* ============================================================
-          IN-GAME TOP WIN95 TITLEBAR + MENU BAR (Exact Screenshot 2!)
+          UNIFIED MOBILE TOP BAR (< 768px or short landscape phone < 520px height)
+          Clean translucent corner scorebug by default; full bar if HUD expanded
           ============================================================ */}
-      {phase !== "TITLE_MENU" && (
+      {isCompact && phase !== "TITLE_MENU" && (
+        <>
+          {showMatchHudPanels ? (
+            <header className="fixed top-0 left-0 right-0 z-50 pc-window border-t-0 border-l-0 border-r-0 px-1.5 h-11 flex items-center justify-between gap-1.5 select-none">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((v) => !v)}
+                aria-label="Открыть меню матча"
+                className={`w-9 h-8 flex items-center justify-center shrink-0 cursor-pointer ${
+                  mobileMenuOpen ? "pc-btn-active" : "pc-btn"
+                }`}
+              >
+                {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              </button>
+
+              <div className="flex-1 min-w-0 flex items-center justify-center gap-1.5">
+                <div className="pc-window-dark px-2 py-0.5 flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={`font-display text-xs font-bold truncate max-w-[44px] ${
+                      currentTurn === "blue" ? "text-sky-300" : "text-slate-400"
+                    }`}
+                  >
+                    {leftClubLabel.slice(0, 3)}
+                  </span>
+                  <span className="font-display text-base font-bold tabular-nums text-white leading-none shrink-0">
+                    {scoreBlue}:{scoreRed}
+                  </span>
+                  <span
+                    className={`font-display text-xs font-bold truncate max-w-[44px] ${
+                      currentTurn === "red" ? "text-red-300" : "text-slate-400"
+                    }`}
+                  >
+                    {rightClubLabel.slice(0, 3)}
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-300 border-l border-slate-600 pl-1.5 tabular-nums shrink-0">
+                    {String(Math.min(turnCount, MAX_TURNS)).padStart(2, "0")}/{MAX_TURNS}
+                  </span>
+                </div>
+
+                {!isSpectating && (
+                  <div className="pc-inset px-1.5 py-0.5 flex items-center gap-1 font-mono text-[10px] font-bold shrink-0">
+                    <span className="text-[#000080] flex items-center gap-0.5 tabular-nums">
+                      <Zap className="w-3 h-3 text-amber-600 shrink-0" />
+                      {actionPoints}
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span
+                      className={`tabular-nums ${
+                        turnTimeLeft <= 5 && isHumanTurn ? "text-red-700" : "text-black"
+                      }`}
+                    >
+                      {Math.ceil(turnTimeLeft)}с
+                    </span>
+                    {isHumanTurn && (
+                      <button
+                        type="button"
+                        onClick={onEndTurn}
+                        title="Завершить ход"
+                        className="pc-btn px-1.5 py-0 text-[10px] font-bold text-[#000080] cursor-pointer ml-0.5"
+                      >
+                        Ход→
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={cycleCameraPreset}
+                  title="Сменить ракурс камеры"
+                  className="pc-btn h-8 px-1.5 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Camera className="w-3.5 h-3.5 text-[#000080]" />
+                  <span className="hidden min-[400px]:inline">{CAMERA_SHORT_LABELS[cameraPreset]}</span>
+                </button>
+                {onToggleMatchHudPanels && (
+                  <button
+                    type="button"
+                    onClick={onToggleMatchHudPanels}
+                    title="Скрыть лишний интерфейс"
+                    className="pc-btn-active h-8 px-1.5 text-[10px] font-bold cursor-pointer"
+                  >
+                    Скрыть
+                  </button>
+                )}
+              </div>
+            </header>
+          ) : (
+            /* Clean Translucent Corner Scorebug Pill on Mobile so pitch spans full screen */
+            <div className="fixed top-1.5 left-1.5 z-40 flex items-center gap-1 bg-slate-950/70 text-white border border-white/20 px-1.5 py-1 select-none shadow-lg max-w-[calc(100vw-48px)]">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((v) => !v)}
+                aria-label="Открыть меню матча"
+                className="w-7 h-7 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white cursor-pointer shrink-0"
+              >
+                {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              </button>
+
+              <div className="flex items-center gap-1 px-1 min-w-0">
+                <span
+                  className={`font-display text-[11px] font-bold truncate max-w-[36px] ${
+                    currentTurn === "blue" ? "text-sky-300" : "text-slate-400"
+                  }`}
+                >
+                  {leftClubLabel.slice(0, 3)}
+                </span>
+                <span className="font-display text-sm font-bold tabular-nums text-white leading-none shrink-0">
+                  {scoreBlue}:{scoreRed}
+                </span>
+                <span
+                  className={`font-display text-[11px] font-bold truncate max-w-[36px] ${
+                    currentTurn === "red" ? "text-red-300" : "text-slate-400"
+                  }`}
+                >
+                  {rightClubLabel.slice(0, 3)}
+                </span>
+                <span className="font-mono text-[10px] text-slate-300 border-l border-white/20 pl-1 tabular-nums shrink-0">
+                  {String(Math.min(turnCount, MAX_TURNS)).padStart(2, "0")}/{MAX_TURNS}
+                </span>
+              </div>
+
+              {!isSpectating && (
+                <div className="flex items-center gap-1 border-l border-white/20 pl-1 font-mono text-[10px] font-bold shrink-0">
+                  <span className="text-amber-300 tabular-nums">⚡{actionPoints}</span>
+                  <span className={`tabular-nums ${turnTimeLeft <= 5 && isHumanTurn ? "text-rose-400" : "text-slate-200"}`}>
+                    {Math.ceil(turnTimeLeft)}с
+                  </span>
+                  {pressureState &&
+                    (pressureState.level === "forward_blocked" ||
+                      pressureState.level === "retreat_only") && (
+                      <span
+                        title={pressureState.reason}
+                        className={`px-1 leading-tight ${
+                          pressureState.level === "retreat_only"
+                            ? "bg-red-600 text-white"
+                            : "bg-amber-400 text-black"
+                        }`}
+                      >
+                        {pressureState.level === "retreat_only" ? "3+" : "2"}
+                      </span>
+                    )}
+                  {isHumanTurn && (
+                    <button
+                      type="button"
+                      onClick={onEndTurn}
+                      title="Завершить ход"
+                      className="px-1.5 py-0.5 bg-sky-600/85 hover:bg-sky-500 text-white text-[10px] font-bold cursor-pointer"
+                    >
+                      Ход→
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={cycleCameraPreset}
+                title="Ракурс камеры"
+                className="px-1.5 py-1 bg-white/10 hover:bg-white/20 text-[10px] font-bold text-amber-300 cursor-pointer shrink-0"
+              >
+                {CAMERA_SHORT_LABELS[cameraPreset]}
+              </button>
+            </div>
+          )}
+
+          {mobileMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-black/45"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-hidden="true"
+              />
+              <nav
+                aria-label="Мобильное меню матча"
+                className="fixed top-11 left-1.5 z-50 w-[min(86vw,300px)] max-h-[calc(100dvh-56px)] overflow-y-auto touch-scroll pc-window p-1.5 space-y-1 text-black shadow-2xl"
+              >
+                <div className="pc-titlebar px-2 py-1 text-xs font-bold flex items-center justify-between">
+                  <span>Меню матча</span>
+                  <span className="font-mono text-[10px] text-amber-300">Онлайн: {onlineCount}</span>
+                </div>
+
+                {[
+                  {
+                    label: "Главное меню / Новый матч",
+                    icon: Play,
+                    action: onOpenSetup,
+                  },
+                  {
+                    label: "Тактика и схема",
+                    icon: ClipboardList,
+                    action: () => onOpenWindow("tactics"),
+                  },
+                  {
+                    label:
+                      skillPoints > 0
+                        ? `Состав команды (+${skillPoints})`
+                        : "Состав команды и AP",
+                    icon: Shirt,
+                    action: () => onOpenWindow("squad"),
+                  },
+                  {
+                    label: "Статистика матча",
+                    icon: BarChart3,
+                    action: () => onOpenWindow("stats"),
+                  },
+                  {
+                    label: "Советы тренера (Groq ИИ)",
+                    icon: BrainCircuit,
+                    action: () => onOpenWindow("coach"),
+                  },
+                  {
+                    label: "Турниры",
+                    icon: Trophy,
+                    action: () => onOpenWindow("tournaments"),
+                  },
+                  {
+                    label: `Онлайн и Эфир (${onlineCount})`,
+                    icon: Globe,
+                    action: () => onOpenWindow("lobby"),
+                  },
+                  {
+                    label: "Настройки",
+                    icon: Settings,
+                    action: () => onOpenWindow("settings"),
+                  },
+                  {
+                    label: "Правила и блокировки (HELP)",
+                    icon: BookOpen,
+                    action: () => onOpenWindow("rules"),
+                  },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        item.action();
+                      }}
+                      className="pc-btn w-full min-h-[42px] px-2.5 py-1.5 text-xs font-bold flex items-center gap-2.5 text-left cursor-pointer"
+                    >
+                      <Icon className="w-4 h-4 text-[#000080] shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+
+                <div className="grid grid-cols-3 gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={onToggleCrt}
+                    className={`min-h-[42px] px-1.5 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                      crtEnabled ? "pc-btn-active" : "pc-btn"
+                    }`}
+                  >
+                    <Monitor className="w-3.5 h-3.5 shrink-0" />
+                    <span>ЭЛТ</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onToggleSound}
+                    className={`min-h-[42px] px-1.5 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                      soundEnabled ? "pc-btn-active" : "pc-btn"
+                    }`}
+                  >
+                    {soundEnabled ? (
+                      <Volume2 className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <VolumeX className="w-3.5 h-3.5 shrink-0" />
+                    )}
+                    <span>Звук</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggleMatchHudPanels?.();
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`min-h-[42px] px-1.5 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                      showMatchHudPanels ? "pc-btn-active" : "pc-btn"
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+                    <span>HUD</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    if (isSpectating) onExitSpectate();
+                    else onOpenSetup();
+                  }}
+                  className="pc-btn w-full min-h-[42px] px-2.5 py-1.5 text-xs font-bold text-red-900 flex items-center gap-2.5 text-left cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4 shrink-0" />
+                  <span>{isSpectating ? "Выйти из эфира" : "Выйти в меню"}</span>
+                </button>
+              </nav>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ============================================================
+          IN-GAME TOP WIN95 TITLEBAR + MENU BAR (Only when HUD Panels expanded!)
+          ============================================================ */}
+      {!isCompact && phase !== "TITLE_MENU" && showMatchHudPanels && (
         <header className="fixed top-0 left-0 right-0 z-50 pc-window border-t-0 border-l-0 border-r-0 p-0 select-none">
           {/* Win95 Blue Titlebar */}
           <div className="pc-titlebar px-2 py-[3px] flex items-center justify-between gap-2">
@@ -661,7 +1063,6 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
               </span>
               {isSpectating && (
                 <span className="bg-red-700 text-white border border-white/60 px-1.5 py-0 text-[10px] font-bold flex items-center gap-1 shrink-0">
-                  <span className="w-1.5 h-1.5 bg-white animate-pulse" />
                   <span>LIVE ЭФИР</span>
                 </span>
               )}
@@ -815,9 +1216,95 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       )}
 
       {/* ============================================================
-          TOP-LEFT SCOREBOARD + LEFT SIDEBAR (Exact Screenshot 2!)
+          TOP-LEFT CLEAN TRANSLUCENT SCOREBUG (or Expanded Sidebars if HUD toggled)
           ============================================================ */}
-      {phase !== "TITLE_MENU" && (
+      {!isCompact && phase !== "TITLE_MENU" && !showMatchHudPanels && (
+        <div className="fixed top-2 left-2 z-20 flex flex-wrap items-center gap-1.5 select-none">
+          <div className="relative flex items-center gap-2 bg-slate-950/70 text-white border border-white/20 px-2 py-1 shadow-lg">
+            <button
+              type="button"
+              onClick={() => setStartMenuOpen((v) => !v)}
+              title="Меню матча"
+              className="h-6 px-1.5 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <Menu className="w-3.5 h-3.5" />
+              <span>Меню</span>
+            </button>
+            {renderStartMenuPopup(false)}
+
+            <div className="flex items-center gap-1.5 border-l border-white/20 pl-2">
+              <span
+                className={`text-[11px] font-bold uppercase truncate max-w-[78px] ${
+                  currentTurn === "blue" ? "text-sky-300" : "text-slate-400"
+                }`}
+              >
+                {leftClubLabel}
+              </span>
+              <span className="bg-black/60 border border-white/25 px-1.5 py-0.5 font-display text-base font-bold tabular-nums leading-none">
+                {scoreBlue}:{scoreRed}
+              </span>
+              <span
+                className={`text-[11px] font-bold uppercase truncate max-w-[78px] ${
+                  currentTurn === "red" ? "text-red-300" : "text-slate-400"
+                }`}
+              >
+                {rightClubLabel}
+              </span>
+            </div>
+
+            <div className="border-l border-white/20 pl-2 font-mono text-[11px] tabular-nums text-slate-200 flex items-center gap-1.5">
+              <span>
+                {String(Math.min(turnCount, MAX_TURNS)).padStart(2, "0")}/{MAX_TURNS}
+              </span>
+              {!isSpectating && (
+                <>
+                  <span className="text-amber-300 font-bold">⚡{actionPoints}/{maxActionPoints}</span>
+                  <span className={turnTimeLeft <= 5 && isHumanTurn ? "text-rose-400 font-bold" : "text-slate-200"}>
+                    {Math.ceil(turnTimeLeft)}с
+                  </span>
+                </>
+              )}
+            </div>
+
+            {!isSpectating && isHumanTurn && (
+              <button
+                type="button"
+                onClick={onEndTurn}
+                title="Завершить ход"
+                className="h-6 px-2 bg-sky-600/85 hover:bg-sky-500 text-white text-[11px] font-bold cursor-pointer"
+              >
+                Ход →
+              </button>
+            )}
+
+            {!isSpectating && (
+              <button
+                type="button"
+                onClick={onToggleCoachHint}
+                title="Подсказка лучшего хода"
+                className={`h-6 w-6 flex items-center justify-center cursor-pointer ${
+                  showCoachHint ? "bg-amber-400 text-slate-950" : "bg-white/10 hover:bg-white/20 text-amber-200"
+                }`}
+              >
+                <Lightbulb className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {onToggleMatchHudPanels && (
+              <button
+                type="button"
+                onClick={onToggleMatchHudPanels}
+                title="Показать все панели (клавиша H)"
+                className="h-6 px-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold text-slate-200 cursor-pointer"
+              >
+                HUD
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!isCompact && phase !== "TITLE_MENU" && showMatchHudPanels && (
         <div className="fixed top-[50px] sm:top-[52px] left-2 z-20 flex flex-col gap-1.5 pointer-events-none select-none">
           {/* Dark Navy Broadcast Scoreboard */}
           <div className="pointer-events-auto pc-window-dark px-2 py-1.5 flex items-center gap-2 sm:gap-2.5 max-w-[92vw]">
@@ -863,34 +1350,125 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                 {turnCount <= MAX_TURNS / 2 ? "1 тайм" : "2 тайм"}
               </div>
             </div>
+
+            {onToggleMatchHudPanels && (
+              <button
+                type="button"
+                onClick={onToggleMatchHudPanels}
+                title="Скрыть боковые панели (H)"
+                className="pc-btn px-1.5 py-1 text-[10px] font-bold text-[#000080] cursor-pointer shrink-0"
+              >
+                Скрыть
+              </button>
+            )}
           </div>
 
-          {/* Slim Momentum Strip */}
+          {/* Slim Momentum, AP, Mentality & Situational Timer Strip */}
           {!isSpectating && (
-            <div className="pointer-events-auto pc-window px-2 py-0.5 hidden sm:flex items-center gap-2 w-fit">
-              <Flame
-                className={`w-3 h-3 shrink-0 ${
-                  superDriveReady ? "text-amber-600 animate-pulse" : "text-orange-700"
-                }`}
-              />
-              <span className="text-[10px] font-bold text-black whitespace-nowrap">
-                {superDriveReady ? "СУПЕР-ДРАЙВ!" : "Импульс"}
-              </span>
-              <div className="w-20 h-2.5 pc-field p-[1px]">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    superDriveReady ? "bg-amber-500" : "win95-progress-fill"
+            <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
+              <div className="pc-window px-2 py-0.5 flex items-center gap-2 w-fit">
+                <span
+                  title="Очки действий (AP) выбранного игрока на ход"
+                  className="font-mono text-[10px] sm:text-[11px] font-bold text-[#000080] flex items-center gap-0.5 tabular-nums"
+                >
+                  <Zap className="w-3 h-3 text-amber-600 shrink-0" />
+                  <span>
+                    {actionPoints}/{maxActionPoints} AP
+                  </span>
+                </span>
+                <span className="text-slate-400">·</span>
+                <span
+                  title="Ситуативный таймер хода"
+                  className={`font-mono text-[10px] sm:text-[11px] font-bold tabular-nums ${
+                    turnTimeLeft <= 5 && isHumanTurn ? "text-red-700" : "text-black"
                   }`}
-                  style={{ width: `${Math.min(100, Math.max(0, momentum))}%` }}
-                />
+                >
+                  ⏱ {Math.ceil(turnTimeLeft)}с
+                </span>
+                {pressureState &&
+                  (pressureState.level === "forward_blocked" ||
+                    pressureState.level === "retreat_only") && (
+                    <span
+                      title={pressureState.reason}
+                      className={`font-mono text-[10px] font-bold px-1 leading-tight ${
+                        pressureState.level === "retreat_only"
+                          ? "bg-red-700 text-white"
+                          : "bg-amber-400 text-black"
+                      }`}
+                    >
+                      {pressureState.level === "retreat_only" ? "🚨3+" : "⛔2"}
+                    </span>
+                  )}
+                {mentality !== "balance" && (
+                  <span
+                    title={
+                      mentality === "attack"
+                        ? "Стиль Атака: +1 AP ВПД/ВНГ на половине соперника"
+                        : "Стиль Защита: +1 AP ЗЩ/ПЗ на своей половине"
+                    }
+                    className={`font-mono text-[9px] font-bold px-1 leading-tight ${
+                      mentality === "attack"
+                        ? "bg-emerald-800 text-emerald-200"
+                        : "bg-sky-900 text-sky-200"
+                    }`}
+                  >
+                    {mentality === "attack" ? "АТК +1AP" : "ЗАЩ +1AP"}
+                  </span>
+                )}
+                {isHumanTurn && (
+                  <button
+                    type="button"
+                    onClick={onEndTurn}
+                    title="Завершить ход и передать право хода"
+                    className="pc-btn px-1.5 py-0 text-[10px] font-bold text-[#000080] cursor-pointer"
+                  >
+                    Ход →
+                  </button>
+                )}
               </div>
-              <span className="font-mono text-[10px] font-bold tabular-nums text-black">
-                {comboStreak > 1 ? `x${comboStreak}` : `${momentum}%`}
-              </span>
+
+              <div className="pc-window px-2 py-0.5 hidden sm:flex items-center gap-1.5 w-fit">
+                <Flame
+                  className={`w-3 h-3 shrink-0 ${
+                    superDriveReady
+                      ? "text-amber-600"
+                      : comboStreak >= 2
+                      ? "text-emerald-700"
+                      : "text-orange-700"
+                  }`}
+                />
+                <span className="text-[10px] font-bold text-black whitespace-nowrap">
+                  {superDriveReady
+                    ? "СУПЕР!"
+                    : comboStreak >= 2
+                    ? "Тики-Така"
+                    : "Импульс"}
+                </span>
+                <div className="w-14 h-2.5 pc-field p-[1px]">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      superDriveReady ? "bg-amber-500" : "win95-progress-fill"
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(0, momentum))}%` }}
+                  />
+                </div>
+                <span
+                  title={
+                    comboStreak >= 2
+                      ? `Серия пасов даёт +${Math.min(900, comboStreak * 300)}мс к таймеру удара`
+                      : "Накопленный импульс до Супер-Драйва"
+                  }
+                  className={`font-mono text-[10px] font-bold tabular-nums ${
+                    comboStreak >= 2 ? "text-emerald-900" : "text-black"
+                  }`}
+                >
+                  {comboStreak >= 2 ? `×${comboStreak}` : `${momentum}%`}
+                </span>
+              </div>
             </div>
           )}
 
-          {/* Vertical Win95 Left Navigation Rail (Exact Screenshot 2) */}
+          {/* Vertical Win95 Left Navigation Rail */}
           <nav
             aria-label="Навигация матча"
             className="pointer-events-auto hidden md:flex flex-col pc-window p-1 w-[132px] gap-1"
@@ -958,28 +1536,41 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       )}
 
       {/* ============================================================
-          TOP-RIGHT FLOATING PLAYER CARD (Exact Screenshot 2!)
+          TOP-RIGHT FLOATING PLAYER CARD (Only when HUD Panels expanded!)
           ============================================================ */}
-      {phase !== "TITLE_MENU" && activePlayerCard && (
+      {!isCompact && phase !== "TITLE_MENU" && showMatchHudPanels && activePlayerCard && (
         <aside
           aria-label="Карточка игрока"
-          className="hidden md:block fixed top-[52px] right-2 z-20 w-[236px] pc-window p-[3px] pointer-events-auto select-none"
+          className={`hidden lg:block fixed top-[52px] right-2 z-20 ${
+            playerCardCollapsed ? "w-[170px]" : "w-[232px]"
+          } pc-window p-[3px] pointer-events-auto select-none`}
         >
           <div className="pc-titlebar px-2 py-0.5 flex items-center justify-between gap-2">
             <span className="font-display text-xs font-bold truncate">
               {PLAYER_NAMES_BY_NUM[activePlayerCard.number] || ROLE_META[activePlayerCard.role].name}
             </span>
-            <button
-              type="button"
-              onClick={() => onOpenWindow("squad")}
-              title="Открыть состав и прокачку"
-              className="pc-btn w-4 h-3.5 text-[9px] font-bold flex items-center justify-center cursor-pointer"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setPlayerCardCollapsed((v) => !v)}
+                title={playerCardCollapsed ? "Развернуть карточку" : "Свернуть карточку"}
+                className="pc-btn w-4 h-3.5 text-[9px] font-bold flex items-center justify-center cursor-pointer"
+              >
+                {playerCardCollapsed ? "+" : "−"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenWindow("squad")}
+                title="Открыть состав и прокачку"
+                className="pc-btn w-4 h-3.5 text-[9px] font-bold flex items-center justify-center cursor-pointer"
+              >
+                ⚙
+              </button>
+            </div>
           </div>
 
-          <div className="bg-[#16202a] text-white p-2 space-y-2 border border-black">
+          {!playerCardCollapsed && (
+            <div className="bg-[#16202a] text-white p-2 space-y-2 border border-black">
             {/* Portrait + Number/Role */}
             <div className="flex items-stretch gap-2.5">
               <div className="pc-field p-0.5 shrink-0">
@@ -1052,15 +1643,20 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                 <span>Советы тренера</span>
               </button>
             )}
-          </div>
+            </div>
+          )}
         </aside>
       )}
 
       {/* FLOATING BROADCAST BANNER */}
       {phase !== "TITLE_MENU" && broadcastBanner && (
-        <div className="fixed top-[88px] left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <div
+          className={`fixed ${
+            isCompact ? "top-[48px]" : "top-[92px]"
+          } left-1/2 -translate-x-1/2 z-20 pointer-events-none max-w-[92vw]`}
+        >
           <div
-            className={`pc-window px-3 py-1 font-display text-xs sm:text-sm font-bold tracking-wide whitespace-nowrap ${
+            className={`pc-window px-3 py-1 font-display text-xs sm:text-sm font-bold tracking-wide truncate ${
               broadcastBanner.tone === "gold"
                 ? "bg-[#000080] text-amber-300"
                 : broadcastBanner.tone === "red"
@@ -1074,11 +1670,11 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       )}
 
       {/* ============================================================
-          BOTTOM-LEFT COMMENTATOR WINDOW (Exact Screenshot 2!)
+          BOTTOM-LEFT COMMENTATOR WINDOW (Only when HUD Panels expanded!)
           ============================================================ */}
-      {phase !== "TITLE_MENU" && (
+      {!isCompact && phase !== "TITLE_MENU" && showMatchHudPanels && (
         <aside
-          className="hidden sm:block fixed bottom-2 left-2 z-20 w-[290px] lg:w-[325px] pointer-events-auto"
+          className="hidden lg:block fixed bottom-2 left-2 z-20 w-[252px] xl:w-[305px] pointer-events-auto"
           aria-label="Комментатор матча"
         >
           <div className="pc-window p-[3px]">
@@ -1140,55 +1736,90 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       )}
 
       {/* ============================================================
-          BOTTOM-CENTER 5-BUTTON WIN95 DOCK (Exact Screenshot 2!)
+          BOTTOM-CENTER COLLAPSIBLE ACTION DOCK (Auto-hides on AI turn & collapse!)
           ============================================================ */}
-      {phase === "PLAYING" && !isSpectating && (
-        <div className="hidden sm:flex fixed bottom-2 left-1/2 -translate-x-1/2 z-20 flex-col items-center gap-1 pointer-events-none">
-          {/* Quick-Switch Strip right above Dock */}
-          {isHumanTurn && quickSwitchPlayers.length > 0 && (
-            <div className="pointer-events-auto pc-window px-1.5 py-0.5 flex items-center gap-1">
-              {quickSwitchPlayers.map((pl) => {
-                const isSel = selectedPlayer?.id === pl.id;
-                const hasBall = ballCarrierId === pl.id;
-                return (
-                  <button
-                    key={pl.id}
-                    type="button"
-                    onClick={() => onSelectQuickPlayer(pl.id)}
-                    className={`h-5 px-1.5 text-[10px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer ${
-                      isSel ? "pc-btn-active" : "pc-btn"
-                    }`}
-                  >
-                    <span>
-                      {ROLE_META[pl.role].code}#{pl.number}
-                    </span>
-                    {hasBall && <span className="text-amber-400">●</span>}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={onCyclePlayer}
-                title="Следующий игрок (Tab)"
-                className="pc-btn h-5 px-1.5 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer"
-              >
-                <RefreshCw className="w-2.5 h-2.5" />
-                <span>Tab</span>
-              </button>
-            </div>
-          )}
-
-          {/* 5 Classic Win95 Bottom Dock Buttons: Пас | Удар | Дриблинг | Отбор | Тактика */}
-          <div className="pointer-events-auto pc-window p-1 flex items-stretch gap-1">
+      {!isCompact && phase === "PLAYING" && !isSpectating && (
+        <div
+          className={`flex fixed bottom-2 left-1/2 -translate-x-1/2 z-20 flex-col items-center gap-1 transition-all duration-200 ${
+            !isHumanTurn
+              ? "translate-y-[130%] opacity-0 pointer-events-none"
+              : "pointer-events-none"
+          }`}
+        >
+          {dockCollapsed ? (
             <button
               type="button"
-              onClick={canQuickPass ? onQuickPass : onCyclePlayer}
-              disabled={!isHumanTurn}
-              title={canQuickPass ? "Быстрый пас вперёд" : "Выбрать игрока с мячом"}
-              className={`w-[72px] py-1.5 flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${
-                canQuickPass ? "pc-btn cursor-pointer" : "pc-btn opacity-80 cursor-pointer"
-              }`}
+              onClick={() => setDockCollapsed(false)}
+              className="pointer-events-auto px-3 py-1 bg-slate-950/75 hover:bg-slate-900 text-white border border-white/20 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-lg"
             >
+              <ChevronUp className="w-3.5 h-3.5 text-amber-300" />
+              <span>Панель действий</span>
+            </button>
+          ) : (
+            <>
+              <div className="pointer-events-auto flex items-center gap-1">
+                {isHumanTurn && quickSwitchPlayers.length > 0 && (
+                  <div className="bg-slate-950/70 text-white border border-white/20 px-1.5 py-0.5 flex items-center gap-1">
+                    {quickSwitchPlayers.map((pl) => {
+                      const isSel = selectedPlayer?.id === pl.id;
+                      const hasBall = ballCarrierId === pl.id;
+                      return (
+                        <button
+                          key={pl.id}
+                          type="button"
+                          onClick={() => onSelectQuickPlayer(pl.id)}
+                          className={`h-5 px-1.5 text-[10px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+                            isSel
+                              ? "bg-amber-400 text-slate-950"
+                              : "bg-white/10 hover:bg-white/20 text-white"
+                          }`}
+                        >
+                          <span>
+                            {ROLE_META[pl.role].code}#{pl.number}
+                          </span>
+                          {hasBall && <span className="text-amber-300">●</span>}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={onCyclePlayer}
+                      title="Следующий игрок (Tab)"
+                      className="h-5 px-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Tab</span>
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDockCollapsed(true)}
+                  title="Скрыть нижнюю панель"
+                  className="h-6 px-2 bg-slate-950/70 hover:bg-slate-900 text-slate-200 border border-white/20 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <ChevronDown className="w-3 h-3" />
+                  <span>Скрыть</span>
+                </button>
+              </div>
+
+              {/* 5 Classic Win95 Bottom Dock Buttons inside sleek Dock */}
+              <div
+                className={`pointer-events-auto p-1 flex items-stretch gap-1 ${
+                  showMatchHudPanels
+                    ? "pc-window"
+                    : "bg-slate-950/75 text-white border border-white/20 shadow-xl"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={canQuickPass ? onQuickPass : onCyclePlayer}
+                  disabled={!isHumanTurn}
+                  title={canQuickPass ? "Быстрый пас вперёд" : "Выбрать игрока с мячом"}
+                  className={`w-[72px] py-1.5 flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${
+                    canQuickPass ? "pc-btn cursor-pointer" : "pc-btn opacity-80 cursor-pointer"
+                  }`}
+                >
               <SoccerBallIcon className="w-6 h-6" />
               <span>Пас</span>
             </button>
@@ -1275,12 +1906,14 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
               </span>
             </button>
           </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* SPECTATOR COMPACT BAR AT BOTTOM-CENTER (doesn't overlap radar minimap!) */}
-      {phase === "PLAYING" && isSpectating && (
-        <div className="hidden sm:flex fixed bottom-2 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+      {/* SPECTATOR COMPACT BAR AT BOTTOM-CENTER (Desktop Only!) */}
+      {!isCompact && phase === "PLAYING" && isSpectating && (
+        <div className="flex fixed bottom-2 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
           <div className="pc-window p-1.5 flex items-center gap-2 text-xs text-black">
             <Eye className="w-4 h-4 text-red-700 shrink-0" />
             <span className="font-bold text-[#000080] max-w-[160px] truncate">
@@ -1344,51 +1977,70 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
         </div>
       )}
 
-      {/* MOBILE BOTTOM THUMB DOCK (< sm) */}
-      {phase === "PLAYING" && (
-        <div className="sm:hidden fixed bottom-1 left-1 right-1 z-20 space-y-1 pointer-events-none">
+      {/* MOBILE BOTTOM THUMB DOCK (Auto-hides cleanly on AI turn or collapse!) */}
+      {isCompact && phase === "PLAYING" && (
+        <div
+          className={`fixed bottom-0 left-0 right-0 z-20 px-1.5 pb-[max(4px,env(safe-area-inset-bottom))] transition-all duration-200 ${
+            !isHumanTurn && !isSpectating
+              ? "translate-y-[130%] opacity-0 pointer-events-none"
+              : "pointer-events-none"
+          }`}
+        >
           {isSpectating ? (
-            <div className="pointer-events-auto pc-window p-1.5 flex items-center justify-between gap-1.5">
-              <span className="text-[11px] font-bold text-black truncate">
-                LIVE: {serverMatch ? serverMatch.roomName : "ИИ-Дерби"}
+            <div className="pointer-events-auto pc-window p-1.5 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-black truncate flex items-center gap-1">
+                <Eye className="w-3.5 h-3.5 text-red-700 shrink-0" />
+                <span>LIVE: {serverMatch ? serverMatch.roomName : "ИИ-Дерби"}</span>
               </span>
               <button
                 type="button"
                 onClick={onExitSpectate}
-                className="pc-btn h-7 px-2.5 text-[10px] font-bold text-red-800"
+                className="pc-btn h-9 px-3 text-xs font-bold text-red-800 shrink-0 cursor-pointer"
               >
                 Выйти
               </button>
             </div>
-          ) : (
-            <div className="pointer-events-auto pc-window p-1.5 space-y-1">
-              {isHumanTurn && quickSwitchPlayers.length > 0 && (
-                <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-                  {quickSwitchPlayers.map((pl) => {
+          ) : dockCollapsed ? (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => setDockCollapsed(false)}
+                className="pointer-events-auto px-3 py-1 bg-slate-950/75 text-white border border-white/20 text-[11px] font-bold flex items-center gap-1 cursor-pointer shadow-lg"
+              >
+                <ChevronUp className="w-3.5 h-3.5 text-amber-300" />
+                <span>Действия</span>
+              </button>
+            </div>
+          ) : isLandscapePhone ? (
+            /* Ultra-slim 1-row landscape phone strip so pitch keeps 85%+ vertical space */
+            <div className="pointer-events-auto bg-slate-950/75 text-white border border-white/20 px-1.5 py-1 flex items-center justify-between gap-1.5 h-11 shadow-lg">
+              <div className="flex items-center gap-1 overflow-x-auto min-w-0 flex-1">
+                {isHumanTurn &&
+                  quickSwitchPlayers.map((pl) => {
                     const isSel = selectedPlayer?.id === pl.id;
+                    const hasBall = ballCarrierId === pl.id;
                     return (
                       <button
                         key={pl.id}
                         type="button"
                         onClick={() => onSelectQuickPlayer(pl.id)}
-                        className={`h-6 px-1.5 text-[10px] font-bold whitespace-nowrap shrink-0 ${
+                        className={`h-8 px-2 text-[10px] font-bold whitespace-nowrap shrink-0 cursor-pointer ${
                           isSel ? "pc-btn-active" : "pc-btn"
                         }`}
                       >
                         {ROLE_META[pl.role].code}#{pl.number}
+                        {hasBall ? "⚽" : ""}
                       </button>
                     );
                   })}
-                </div>
-              )}
-
-              <div className="grid grid-cols-4 gap-1">
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
-                  disabled={!canQuickPass}
-                  onClick={onQuickPass}
-                  className={`h-8 text-[11px] font-bold ${
-                    canQuickPass ? "pc-btn" : "pc-inset text-slate-500"
+                  disabled={!isHumanTurn}
+                  onClick={canQuickPass ? onQuickPass : onCyclePlayer}
+                  className={`h-9 px-2.5 text-[11px] font-bold cursor-pointer ${
+                    canQuickPass ? "pc-btn" : "pc-btn opacity-75"
                   }`}
                 >
                   Пас
@@ -1397,7 +2049,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   type="button"
                   disabled={!canQuickShot}
                   onClick={onQuickShot}
-                  className={`h-8 text-[11px] font-bold ${
+                  className={`h-9 px-2.5 text-[11px] font-bold cursor-pointer ${
                     canQuickShot ? "pc-btn-primary" : "pc-inset text-slate-500"
                   }`}
                 >
@@ -1407,18 +2059,137 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   type="button"
                   disabled={!canAutoMove}
                   onClick={onAutoMove}
-                  className={`h-8 text-[11px] font-bold ${
+                  className={`h-9 px-2.5 text-[11px] font-bold cursor-pointer ${
                     canAutoMove ? "pc-btn" : "pc-inset text-slate-500"
                   }`}
                 >
-                  Дриблинг
+                  Ход
                 </button>
                 <button
                   type="button"
+                  disabled={!isHumanTurn}
                   onClick={onSelectBestDefender}
-                  className="pc-btn h-8 text-[11px] font-bold"
+                  className="pc-btn h-9 px-2 text-[11px] font-bold cursor-pointer"
                 >
                   Отбор
+                </button>
+                <button
+                  type="button"
+                  onClick={onEndTurn}
+                  disabled={!isHumanTurn}
+                  className="pc-btn h-9 px-2 text-[11px] font-bold text-[#000080] cursor-pointer"
+                >
+                  Конец→
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDockCollapsed(true)}
+                  title="Скрыть панель"
+                  aria-label="Скрыть панель"
+                  className="pc-btn w-8 h-9 flex items-center justify-center text-slate-700 cursor-pointer"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Portrait Mobile Thumb Dock: 2 ergonomic rows + quick collapse handle */
+            <div className="pointer-events-auto bg-slate-950/78 text-white border border-white/20 p-1.5 space-y-1 shadow-xl">
+              <div className="flex items-center justify-between gap-1">
+                {isHumanTurn && quickSwitchPlayers.length > 0 ? (
+                  <div className="flex items-center gap-1 overflow-x-auto pb-0.5 flex-1">
+                  {quickSwitchPlayers.map((pl) => {
+                    const isSel = selectedPlayer?.id === pl.id;
+                    const hasBall = ballCarrierId === pl.id;
+                    return (
+                      <button
+                        key={pl.id}
+                        type="button"
+                        onClick={() => onSelectQuickPlayer(pl.id)}
+                        className={`h-8 px-2 text-[11px] font-bold whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
+                          isSel ? "pc-btn-active" : "pc-btn"
+                        }`}
+                      >
+                        <span>
+                          {ROLE_META[pl.role].code}#{pl.number}
+                        </span>
+                        {hasBall && <span className="text-amber-400">●</span>}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={onCyclePlayer}
+                    className="pc-btn h-8 px-2 text-[11px] font-bold shrink-0 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Ещё</span>
+                  </button>
+                </div>
+                ) : (
+                  <span className="text-[10px] text-slate-300 px-1">Панель действий</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDockCollapsed(true)}
+                  title="Скрыть панель"
+                  className="h-7 px-2 bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold shrink-0 flex items-center cursor-pointer"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-5 gap-1">
+                <button
+                  type="button"
+                  disabled={!isHumanTurn}
+                  onClick={canQuickPass ? onQuickPass : onCyclePlayer}
+                  className={`min-h-[44px] text-[11px] font-bold flex flex-col items-center justify-center leading-tight cursor-pointer ${
+                    canQuickPass ? "pc-btn" : "pc-btn opacity-75"
+                  }`}
+                >
+                  <span>Пас</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canQuickShot}
+                  onClick={onQuickShot}
+                  className={`min-h-[44px] text-[11px] font-bold flex flex-col items-center justify-center leading-tight cursor-pointer ${
+                    canQuickShot ? "pc-btn-primary" : "pc-inset text-slate-500"
+                  }`}
+                >
+                  <span>{superDriveReady && canQuickShot ? "Супер!" : "Удар"}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canAutoMove}
+                  onClick={onAutoMove}
+                  className={`min-h-[44px] text-[11px] font-bold flex flex-col items-center justify-center leading-tight cursor-pointer ${
+                    canAutoMove ? "pc-btn" : "pc-inset text-slate-500"
+                  }`}
+                >
+                  <span>Дрибл.</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!isHumanTurn}
+                  onClick={onSelectBestDefender}
+                  className="pc-btn min-h-[44px] text-[11px] font-bold flex flex-col items-center justify-center leading-tight cursor-pointer"
+                >
+                  <span>Отбор</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const order: TacticalMentality[] = ["balance", "attack", "defend"];
+                    const next = order[(order.indexOf(mentality) + 1) % order.length];
+                    onChangeMentality(next);
+                  }}
+                  className="pc-btn min-h-[44px] text-[10px] font-bold flex flex-col items-center justify-center leading-tight cursor-pointer"
+                >
+                  <span>
+                    {mentality === "attack" ? "Атака" : mentality === "defend" ? "Защита" : "Баланс"}
+                  </span>
                 </button>
               </div>
             </div>
@@ -1593,17 +2364,17 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
           ==================================================================== */}
       {phase === "TITLE_MENU" && setupOpen && (
         <Win95Window
-          title="WINDOWS 95 FOOTBALL"
+          title="WINDOWS 95 FOOTBALL — Главное меню"
           icon={<SoccerBallIcon className="w-4 h-4 shrink-0" />}
           ariaLabel="Главное меню Windows 95 Football"
           zIndex={getWindowZ("setup")}
           isActive={activeWindowId === "setup"}
           isMinimized={minimizedWindows.includes("setup")}
           cascadeIndex={0}
-          topBoundary={4}
-          bottomBoundary={38}
-          defaultWidth={680}
-          defaultHeight={540}
+          topBoundary={6}
+          bottomBoundary={42}
+          defaultWidth={700}
+          defaultHeight={530}
           minWidth={310}
           minHeight={360}
           onFocus={() => onFocusWindow("setup")}
@@ -1620,7 +2391,29 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
         >
           <div className="p-3 sm:p-4 flex-1 overflow-y-auto flex items-center justify-center bg-[#c0c0c0] text-black">
             <div className="w-full max-w-4xl space-y-3">
-              {/* Two-Column Hero matching Screenshot 1 Top-Left */}
+              {/* Crisp Retro Header Banner inside Main Menu */}
+              <div className="pc-inset-dark px-3 py-2 flex items-center justify-between gap-2 text-white">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <PixelClubCrest
+                    team="blue"
+                    label={userProfile.clubName.slice(0, 3)}
+                    className="w-8 h-9 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="font-display text-base sm:text-lg font-bold tracking-wide text-amber-300 truncate leading-tight">
+                      {userProfile.clubName} · СЕЗОН 95
+                    </div>
+                    <div className="font-mono text-[10px] text-sky-200 truncate">
+                      Менеджер: {userProfile.managerName} · Побед: {userProfile.matchesWon} · Трофеев: {userProfile.trophies}
+                    </div>
+                  </div>
+                </div>
+                <span className="font-mono text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/60 px-2 py-0.5 shrink-0">
+                  32×32 · AP · БЛОК
+                </span>
+              </div>
+
+              {/* Two-Column Hero: Upgraded Stadium Artwork + Elevated Buttons */}
               <div className="grid grid-cols-1 md:grid-cols-[1.15fr_1fr] gap-3 items-stretch">
                 <MainMenuHeroArtwork clubName={userProfile.clubName} />
 
@@ -1637,44 +2430,50 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                         setupAiEngine
                       )
                     }
-                    className="pc-btn-primary py-3 px-3.5 flex items-center gap-3 text-left cursor-pointer shadow-md"
+                    className="pc-btn-primary py-3 px-3.5 flex items-center justify-between gap-3 text-left cursor-pointer shadow-md"
                   >
-                    <SoccerBallIcon className="w-8 h-8 shrink-0 text-amber-300" />
-                    <div className="min-w-0">
-                      <div className="font-display text-xl font-bold leading-none text-white tracking-wide">
-                        Новый матч
-                      </div>
-                      <div className="text-[11px] text-emerald-200 mt-1 truncate">
-                        {setupMode === "ai"
-                          ? `${setupAiEngine === "groq" ? "Groq ИИ-Агент" : "ИИ 95"} · ${PITCH_META[setupPitch].name}`
-                        : `2 игрока · ${PITCH_META[setupPitch].name}`}
-                      </div>
-                    </div>
+                    <span className="flex items-center gap-3 min-w-0">
+                      <SoccerBallIcon className="w-8 h-8 shrink-0 text-amber-300" />
+                      <span className="min-w-0 block">
+                        <span className="block font-display text-xl font-bold leading-none text-white tracking-wide">
+                          Новый матч
+                        </span>
+                        <span className="block font-mono text-[10px] text-emerald-100 mt-1 truncate">
+                          {setupMode === "ai"
+                            ? `${setupAiEngine === "groq" ? "Groq ИИ" : "ИИ 95"} · ${PITCH_META[setupPitch].name}`
+                            : `2 игрока · ${PITCH_META[setupPitch].name}`}
+                        </span>
+                      </span>
+                    </span>
+                    <Play className="w-5 h-5 text-amber-300 shrink-0" />
                   </button>
 
                   <button
                     type="button"
                     onClick={() => onOpenWindow("tournaments")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
+                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer"
                   >
-                    <Trophy className="w-7 h-7 text-amber-600 shrink-0" />
-                    <div className="font-display text-lg font-bold leading-none text-black">
-                      Турниры
-                    </div>
+                    <span className="flex items-center gap-3">
+                      <Trophy className="w-6 h-6 text-amber-600 shrink-0" />
+                      <span className="font-display text-lg font-bold leading-none text-black">
+                        Турниры
+                      </span>
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-700 font-bold">5 кубков</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => onOpenWindow("lobby")}
-                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-[#d8d8d8]"
+                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer"
                   >
                     <span className="flex items-center gap-3">
-                      <Globe className="w-7 h-7 text-sky-700 shrink-0" />
+                      <Globe className="w-6 h-6 text-sky-700 shrink-0" />
                       <span className="font-display text-lg font-bold leading-none text-black">
-                        Онлайн
+                        Онлайн и Эфир
                       </span>
                     </span>
-                    <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-200 px-1.5 border border-black">
+                    <span className="font-mono text-[11px] font-bold text-emerald-950 bg-emerald-200 px-1.5 border border-black">
                       ● {onlineCount}
                     </span>
                   </button>
@@ -1682,42 +2481,44 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenWindow("squad")}
-                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-[#d8d8d8]"
+                    className="pc-btn py-2.5 px-3 flex items-center justify-between gap-2 text-left cursor-pointer"
                   >
                     <span className="flex items-center gap-3">
-                      <Users className="w-7 h-7 text-emerald-700 shrink-0" />
+                      <Users className="w-6 h-6 text-emerald-700 shrink-0" />
                       <span className="font-display text-lg font-bold leading-none text-black">
-                        Команда
+                        Состав и AP
                       </span>
                     </span>
                     {skillPoints > 0 && (
-                      <span className="font-mono text-[11px] font-bold text-amber-900 bg-amber-300 px-1 border border-black">
+                      <span className="font-mono text-[11px] font-bold text-amber-950 bg-amber-300 px-1.5 border border-black">
                         +{skillPoints} очков
                       </span>
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => onOpenWindow("settings")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
-                  >
-                    <Settings className="w-7 h-7 text-slate-700 shrink-0" />
-                    <div className="font-display text-lg font-bold leading-none text-black">
-                      Настройки
-                    </div>
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenWindow("settings")}
+                      className="pc-btn py-2 px-3 flex items-center gap-2 text-left cursor-pointer"
+                    >
+                      <Settings className="w-5 h-5 text-slate-700 shrink-0" />
+                      <span className="font-display text-base font-bold leading-none text-black">
+                        Настройки
+                      </span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => onCloseWindow("setup")}
-                    className="pc-btn py-2.5 px-3 flex items-center gap-3 text-left cursor-pointer hover:bg-[#d8d8d8]"
-                  >
-                    <LogOut className="w-7 h-7 text-red-800 shrink-0" />
-                    <div className="font-display text-lg font-bold leading-none text-black">
-                      Выход
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenWindow("rules")}
+                      className="pc-btn py-2 px-3 flex items-center gap-2 text-left cursor-pointer"
+                    >
+                      <BookOpen className="w-5 h-5 text-[#000080] shrink-0" />
+                      <span className="font-display text-base font-bold leading-none text-black">
+                        Справка
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2092,9 +2893,9 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                       onChange={(e) => onChangeMentality(e.target.value as TacticalMentality)}
                       className="pc-field w-full px-2 py-1.5 text-xs font-bold"
                     >
-                      <option value="attack">Атакующий (Рывки вперёд)</option>
+                      <option value="attack">Атакующий (+1 AP атаке впереди)</option>
                       <option value="balance">Сбалансированный</option>
-                      <option value="defend">Оборонительный (Прессинг)</option>
+                      <option value="defend">Оборонительный (+1 AP защите сзади)</option>
                     </select>
                   </div>
 
@@ -2144,11 +2945,14 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
               <div className="flex items-center justify-end gap-2 pt-1 border-t border-[#808080]">
                 <button
                   type="button"
-                  onClick={() => onCloseWindow("tactics")}
+                  onClick={() => {
+                    onApplyFormation(activeFormation.id);
+                    onCloseWindow("tactics");
+                  }}
                   className="pc-btn-primary px-5 py-1.5 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>Применить</span>
+                  <span>Применить ({activeFormation.id})</span>
                 </button>
                 <button
                   type="button"
@@ -2562,32 +3366,32 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       )}
 
       {/* ====================================================================
-          GAME OVER DIALOG (Exact Screenshot 1 Bottom-Right!)
+          GAME OVER DIALOG
           ==================================================================== */}
       {phase === "GAME_OVER" && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4"
           role="dialog"
           aria-modal="true"
           aria-label="Матч окончен"
         >
-          <div className="w-full max-w-md pc-window p-[3px]">
-            <div className="pc-titlebar px-2.5 py-1 flex items-center justify-between">
+          <div className="w-full max-w-md max-h-[95dvh] flex flex-col pc-window p-[3px]">
+            <div className="pc-titlebar px-2.5 py-1 flex items-center justify-between shrink-0">
               <span className="font-display text-sm font-bold">Матч окончен</span>
               <Win95CaptionButtons onClose={onOpenSetup} closeLabel="В главное меню" />
             </div>
 
-            <div className="p-3.5 space-y-3 bg-[#c0c0c0] text-black">
-              <div className="pc-inset-dark p-4 text-center space-y-2.5">
+            <div className="p-3 sm:p-3.5 space-y-2.5 sm:space-y-3 bg-[#c0c0c0] text-black overflow-y-auto touch-scroll">
+              <div className="pc-inset-dark p-3 sm:p-4 text-center space-y-2">
                 <div className="flex items-center justify-around gap-2">
-                  <PixelClubCrest team="blue" label={leftClubLabel.slice(0, 3)} className="w-12 h-13" />
-                  <div className="font-display text-4xl font-bold tabular-nums text-white">
+                  <PixelClubCrest team="blue" label={leftClubLabel.slice(0, 3)} className="w-11 h-12 sm:w-12 sm:h-13" />
+                  <div className="font-display text-3xl sm:text-4xl font-bold tabular-nums text-white">
                     {scoreBlue} : {scoreRed}
                   </div>
-                  <PixelClubCrest team="red" label={rightClubLabel.slice(0, 3)} className="w-12 h-13" />
+                  <PixelClubCrest team="red" label={rightClubLabel.slice(0, 3)} className="w-11 h-12 sm:w-12 sm:h-13" />
                 </div>
 
-                <h2 className="font-display text-xl font-bold text-amber-300">
+                <h2 className="font-display text-lg sm:text-xl font-bold text-amber-300">
                   {winner === "blue"
                     ? `Победа! ${leftClubLabel}`
                     : winner === "red"
@@ -2616,7 +3420,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenWindow("stats")}
-                  className="pc-btn w-full py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  className="pc-btn w-full min-h-[42px] py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <BarChart3 className="w-4 h-4 text-[#000080]" />
                   <span>Статистика</span>
@@ -2625,7 +3429,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                 <button
                   type="button"
                   onClick={isSpectating ? onExitSpectate : onResetMatch}
-                  className="pc-btn-primary w-full py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  className="pc-btn-primary w-full min-h-[42px] py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
                   <span>{isSpectating ? "Назад в лобби" : "Продолжить (Ещё матч)"}</span>
@@ -2634,7 +3438,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
                 <button
                   type="button"
                   onClick={onOpenSetup}
-                  className="pc-btn w-full py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                  className="pc-btn w-full min-h-[42px] py-2 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Home className="w-4 h-4 text-sky-800" />
                   <span>Главное меню</span>
@@ -2655,7 +3459,7 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
       {/* STACKABLE HELP WINDOW */}
       {rulesOpen && (
         <Win95Window
-          title="HELP.HLP — Роли и Блиц"
+          title="HELP.HLP — Тактика, Блокировки и Блиц"
           icon={<BookOpen className="w-3.5 h-3.5 text-amber-200 shrink-0" />}
           ariaLabel="Справочник ролей и правил"
           zIndex={getWindowZ("rules")}
@@ -2676,9 +3480,22 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
             { text: "Поле 32×32" },
           ]}
         >
-          <div className="p-3.5 space-y-3 overflow-y-auto flex-1 text-black">
+          <div className="p-3.5 space-y-3 overflow-y-auto touch-scroll flex-1 text-black">
+            <fieldset className="win95-groupbox space-y-1.5 bg-[#d4d0c8]">
+              <legend>Тактические блокировки и блиц-дуэли</legend>
+              <p className="text-xs leading-snug">
+                <strong className="text-[#000080]">2 защитника спереди:</strong> проход и дриблинг вперёд заблокированы — уходите во фланг, отступайте или отдавайте разрезающий пас.
+              </p>
+              <p className="text-xs leading-snug">
+                <strong className="text-red-800">3+ защитника в зоне контроля:</strong> игрок в жёстком прессинге и может двигаться только назад или искать пас (успешный пас из-под двойного/тройного блока возвращает +1 AP!).
+              </p>
+              <p className="text-xs leading-snug">
+                <strong className="text-emerald-900">Блиц только при прямом стыке:</strong> крестики-нолики запускаются только при прямом отборе, прорыве сквозь защитника или ударе в перекрытый створ. Открытый удар в угол забивается сразу!
+              </p>
+            </fieldset>
+
             <fieldset className="win95-groupbox space-y-2">
-              <legend>Амплуа и шахматные ходы</legend>
+              <legend>Амплуа и 360° тактические зоны</legend>
               {(["GK", "DEF", "MID", "WNG", "FWD"] as const).map((role) => {
                 const meta = ROLE_META[role];
                 return (
@@ -2716,19 +3533,24 @@ export const OverlayHUD: React.FC<OverlayHUDProps> = ({
         <PlayerActionPopover
           player={selectedPlayer}
           progression={progression}
-          hasBall={ballCarrierId === selectedPlayer.id}
+          hasBall={selectedHasBall}
           actionPoints={actionPoints}
           maxActionPoints={maxActionPoints}
           turnTimeLeft={turnTimeLeft}
-          maxTurnTime={20}
+          maxTurnTime={maxTurnTime}
+          actionMode={actionMode}
+          moveMinCost={moveMinCost}
+          passCost={passCost}
+          shotCost={shotCost}
+          hasClashTarget={hasClashTarget}
+          pressureState={pressureState}
           onClose={() => onToggleActionPopover(false)}
-          onActionClick={(action) => {
+          onActionClick={(action) => onSelectActionMode(action)}
+          onEndTurn={() => {
             onToggleActionPopover(false);
-            if (action === "pass") onQuickPass();
-            else if (action === "shoot") onQuickShot();
-            else if (action === "move") onAutoMove();
-            else onAutoMove();
+            onEndTurn();
           }}
+          canMove={canSelectedMove}
           canPass={canQuickPass}
           canShoot={canQuickShot}
         />

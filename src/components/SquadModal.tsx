@@ -16,7 +16,7 @@ import {
   SquadProgressionState,
 } from "../types/game";
 import { ChessPieceIcon } from "./ChessPieceIcon";
-import { drawPlayerPreviewToCanvas } from "../pixi/pixelArtTextures";
+import { drawPlayerPreviewToCanvas } from "../engine3d/playerPreview";
 import { PixelPlayerPortrait } from "./Win95Art";
 import {
   ArrowLeft,

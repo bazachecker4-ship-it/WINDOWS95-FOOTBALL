@@ -97,6 +97,10 @@ function computeInitialRect(
   };
 }
 
+function checkCompactScreen(): boolean {
+  return typeof window !== "undefined" && (window.innerWidth < 768 || window.innerHeight < 520);
+}
+
 export const Win95Window: React.FC<Win95WindowProps> = ({
   title,
   icon,
@@ -111,7 +115,7 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
   cascadeIndex = 0,
   topBoundary = 42,
   bottomBoundary = 38,
-  defaultMaximized = true,
+  defaultMaximized = false,
   statusBarPanes,
   onFocus,
   onMinimize,
@@ -119,6 +123,7 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
   children,
 }) => {
   const [isMaximized, setIsMaximized] = useState(defaultMaximized);
+  const [isCompactScreen, setIsCompactScreen] = useState(checkCompactScreen);
   const [rect, setRect] = useState<WindowRect>(() =>
     computeInitialRect(
       defaultWidth,
@@ -141,6 +146,7 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
   // Keep window within viewport on device rotation / window resize
   useEffect(() => {
     const clampToViewport = () => {
+      setIsCompactScreen(checkCompactScreen());
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       setRect((prev) => {
@@ -262,13 +268,15 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
     [isMaximized, onFocus, rect]
   );
 
-  const frameStyle: React.CSSProperties = isMaximized
+  const effectiveMaximized = isMaximized || isCompactScreen;
+
+  const frameStyle: React.CSSProperties = effectiveMaximized
     ? {
         position: "fixed",
-        left: 0,
+        left: isCompactScreen && !isMaximized ? 4 : 0,
         top: topBoundary,
-        width: "100vw",
-        height: `calc(100dvh - ${topBoundary + bottomBoundary}px)`,
+        width: isCompactScreen && !isMaximized ? "calc(100vw - 8px)" : "100vw",
+        height: `calc(100dvh - ${topBoundary + bottomBoundary + (isCompactScreen && !isMaximized ? 4 : 0)}px)`,
         zIndex,
         display: isMinimized ? "none" : "flex",
       }
@@ -292,11 +300,11 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
     >
       {/* Win95 Title Bar (Drag to move, double-click to maximize/restore) */}
       <div
-        onPointerDown={startMove}
-        onDoubleClick={() => setIsMaximized((v) => !v)}
+        onPointerDown={!effectiveMaximized ? startMove : undefined}
+        onDoubleClick={!isCompactScreen ? () => setIsMaximized((v) => !v) : undefined}
         className={`px-2 py-1 flex items-center justify-between gap-2 shrink-0 touch-none ${
           isActive ? "pc-titlebar" : "pc-titlebar-inactive"
-        } ${isMaximized ? "cursor-default" : "cursor-move"}`}
+        } ${effectiveMaximized ? "cursor-default" : "cursor-move"}`}
       >
         <div className="flex items-center gap-1.5 min-w-0 pointer-events-none">
           {icon}
@@ -307,14 +315,14 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
 
         <Win95CaptionButtons
           onMinimize={onMinimize}
-          onMaximize={() => setIsMaximized((v) => !v)}
-          isMaximized={isMaximized}
+          onMaximize={!isCompactScreen ? () => setIsMaximized((v) => !v) : undefined}
+          isMaximized={effectiveMaximized}
           onClose={onClose}
         />
       </div>
 
       {/* Window Content Body */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#c0c0c0]">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#c0c0c0] touch-scroll">
         {children}
       </div>
 
@@ -322,13 +330,13 @@ export const Win95Window: React.FC<Win95WindowProps> = ({
       {statusBarPanes && (
         <Win95StatusBar
           panes={statusBarPanes}
-          onResizePointerDown={!isMaximized ? startResize("se") : undefined}
-          showGrip={!isMaximized}
+          onResizePointerDown={!effectiveMaximized ? startResize("se") : undefined}
+          showGrip={!effectiveMaximized}
         />
       )}
 
       {/* Interactive Edge & Corner Resize Handles (when not maximized) */}
-      {!isMaximized && (
+      {!effectiveMaximized && (
         <>
           <div
             onPointerDown={startResize("n")}

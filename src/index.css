@@ -25,13 +25,6 @@
 @layer base {
   html,
   body,
-  #root,
-  * {
-    cursor: var(--cursor-arrow);
-  }
-
-  html,
-  body,
   #root {
     height: 100%;
     width: 100%;
@@ -44,24 +37,53 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  button:not(:disabled),
-  a,
-  select,
-  [role="button"],
-  .cursor-pointer {
-    cursor: var(--cursor-pointer) !important;
-  }
+  @media (hover: hover) and (pointer: fine) {
+    html,
+    body,
+    #root,
+    * {
+      cursor: var(--cursor-arrow);
+    }
 
-  button:disabled,
-  .cursor-not-allowed {
-    cursor: var(--cursor-not-allowed) !important;
+    button:not(:disabled),
+    a,
+    select,
+    [role="button"],
+    .cursor-pointer {
+      cursor: var(--cursor-pointer) !important;
+    }
+
+    button:disabled,
+    .cursor-not-allowed {
+      cursor: var(--cursor-not-allowed) !important;
+    }
   }
 }
 
-/* Authentic Windows 95 Teal Desktop */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+}
+
+/* Authentic Windows 95 Teal Desktop with subtle 2px pixel weave */
 .win95-desktop {
   background-color: #008080;
-  background-image: radial-gradient(circle at 50% 45%, #008b8b 0%, #007373 65%, #005858 100%);
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.018) 0px,
+      rgba(255, 255, 255, 0.018) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    radial-gradient(circle at 50% 42%, #009292 0%, #007474 62%, #005252 100%);
 }
 
 /* Classic Windows 95 Double-Bevel Window Frame */
@@ -73,20 +95,23 @@
   border-right: 2px solid #000000;
   border-bottom: 2px solid #000000;
   box-shadow:
-    inset 1px 1px 0 #dfdfdf,
+    inset 1px 1px 0 #e6e6e6,
     inset -1px -1px 0 #808080,
-    4px 4px 0px rgba(0, 0, 0, 0.55);
+    5px 5px 0px rgba(0, 0, 0, 0.48),
+    0 14px 28px rgba(0, 0, 0, 0.34);
   border-radius: 0;
 }
 
 .pc-window-dark {
-  background-color: #131b20;
+  background: linear-gradient(180deg, #16212b 0%, #0e161d 100%);
   color: #e2e8f0;
-  border-top: 2px solid #475569;
-  border-left: 2px solid #475569;
+  border-top: 2px solid #64748b;
+  border-left: 2px solid #64748b;
   border-right: 2px solid #000000;
   border-bottom: 2px solid #000000;
-  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.75);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.08),
+    4px 4px 0px rgba(0, 0, 0, 0.78);
   border-radius: 0;
 }
 
@@ -118,15 +143,15 @@
 }
 
 .pc-inset-dark {
-  background-color: #080d11;
+  background: linear-gradient(180deg, #091017 0%, #05090e 100%);
   color: #e2e8f0;
   border-top: 2px solid #000000;
   border-left: 2px solid #000000;
-  border-right: 2px solid #808080;
-  border-bottom: 2px solid #808080;
+  border-right: 2px solid #64748b;
+  border-bottom: 2px solid #64748b;
   box-shadow:
     inset 1px 1px 0 #1e293b,
-    inset -1px -1px 0 #475569;
+    inset -1px -1px 0 #334155;
   border-radius: 0;
 }
 
@@ -139,14 +164,14 @@
   border-right: 2px solid #000000;
   border-bottom: 2px solid #000000;
   box-shadow:
-    inset 1px 1px 0 #dfdfdf,
+    inset 1px 1px 0 #e2e2e2,
     inset -1px -1px 0 #808080;
   border-radius: 0;
-  transition: background-color 60ms ease;
+  transition: background-color 80ms ease, filter 80ms ease;
 }
 
 .pc-btn:hover:not(:disabled) {
-  background-color: #cbcbcb;
+  background-color: #d2d2d2;
 }
 
 .pc-btn:active:not(:disabled) {
@@ -166,7 +191,7 @@
 
 /* Win95 Default/Primary Action Button (Thick black outer focus frame) */
 .pc-btn-primary {
-  background-color: #008040;
+  background: linear-gradient(180deg, #05964a 0%, #007439 100%);
   color: #ffffff;
   border-top: 2px solid #6ee7b7;
   border-left: 2px solid #6ee7b7;
@@ -176,10 +201,11 @@
     0 0 0 1px #000000,
     inset -1px -1px 0 #064e3b;
   border-radius: 0;
+  transition: filter 90ms ease, transform 70ms ease;
 }
 
 .pc-btn-primary:hover:not(:disabled) {
-  background-color: #059669;
+  filter: brightness(1.08);
 }
 
 .pc-btn-primary:active:not(:disabled) {
@@ -192,7 +218,7 @@
 
 /* Pressed / Active Navy Toggle Button */
 .pc-btn-active {
-  background-color: #000080;
+  background: linear-gradient(180deg, #000094 0%, #00006e 100%);
   color: #ffffff;
   border-top: 2px solid #000000;
   border-left: 2px solid #000000;
@@ -204,7 +230,7 @@
 
 /* Classic Win95 Titlebar Gradient */
 .pc-titlebar {
-  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  background: linear-gradient(90deg, #000080 0%, #0d62b3 62%, #1084d0 100%);
   color: #ffffff;
   border-radius: 0;
 }
@@ -297,30 +323,30 @@
 .crt-scanlines {
   background-image: repeating-linear-gradient(
     0deg,
-    rgba(0, 0, 0, 0.14) 0px,
-    rgba(0, 0, 0, 0.14) 1px,
+    rgba(0, 0, 0, 0.08) 0px,
+    rgba(0, 0, 0, 0.08) 1px,
     transparent 1px,
     transparent 3px
   );
 }
 
 @keyframes crtFlicker {
-  0% { opacity: 0.94; }
-  50% { opacity: 0.99; }
-  100% { opacity: 0.95; }
+  0% { opacity: 0.975; }
+  50% { opacity: 1; }
+  100% { opacity: 0.98; }
 }
 
 .crt-animated-overlay {
   background: linear-gradient(
-    rgba(18, 16, 16, 0) 50%, 
-    rgba(0, 0, 0, 0.18) 50%
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.085) 50%
   ), repeating-linear-gradient(
     0deg,
     transparent 0px,
     transparent 2px,
-    rgba(0, 200, 100, 0.02) 3px
+    rgba(0, 220, 130, 0.014) 3px
   );
   background-size: 100% 4px, 100% 100%;
-  animation: crtFlicker 0.25s infinite;
+  animation: crtFlicker 0.36s infinite;
   pointer-events: none;
 }

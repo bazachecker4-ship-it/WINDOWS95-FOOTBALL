@@ -19,9 +19,11 @@ import type {
   BlitzComplexity,
   BlitzModePreference,
   BlitzPace,
+  CoachMistakeItem,
   CommentaryItem,
   LiveMatchSummary,
   LobbyChatMessage,
+  MatchMistakeEvent,
   MultiplayerRoomInfo,
   OnlineUserInfo,
   PitchType,
@@ -87,15 +89,19 @@ interface CoachAnalysisPayload {
   scoreBlue: number;
   scoreRed: number;
   turn: number;
+  isHalftime?: boolean;
   stats: {
     moves: number;
     passes: number;
     shots: number;
+    offsides?: number;
+    turnTimeouts?: number;
     blitzPlayed: number;
     blitzWon: number;
     blitzTimeouts: number;
     mostUsedRole: string;
   };
+  mistakes?: MatchMistakeEvent[];
   squadSummary: Array<{
     role: string;
     speed: number;
@@ -111,6 +117,12 @@ interface CoachAnalysisResult {
   styleSummary: string;
   tacticalAdvice: string[];
   upgradeRecommendation: string;
+  isHalftime?: boolean;
+  mistakeReport?: {
+    overview: string;
+    playerErrors: CoachMistakeItem[];
+    secondHalfPlan: string;
+  };
   source: "gemini" | "groq" | "local";
 }
 
@@ -272,10 +284,75 @@ function buildFallbackCoachAnalysis(payload: CoachAnalysisPayload): CoachAnalysi
       ? "Прокачайте «Скорость» у Форварда и «Пас» у Полузащитника, чтобы быстрее вскрывать плотную оборону."
       : "Развивайте «Точность» у Форварда и откройте способность «Голевое чутьё» для упрощения ударного блица.";
 
+  const mistakes = Array.isArray(payload.mistakes) ? payload.mistakes : [];
+  const playerErrors: CoachMistakeItem[] = [];
+  for (const m of mistakes.slice(-4)) {
+    const fix =
+      m.type === "offside"
+        ? "Выдерживайте линию предпоследнего защитника и отдавайте пас на ход чуть раньше."
+        : m.type === "timeout"
+        ? "Принимайте быстрый базовый ход (1–2 AP) до истечения таймера ситуации."
+        : m.type === "blitz_timeout"
+        ? "Не затягивайте решение на сетке блица — берите центр или угол сразу."
+        : m.type === "fatigue"
+        ? "Переключайтесь на свежих фланговых игроков и берегите выносливость."
+        : "Избегайте рискованных стыков без поддержки и используйте пас в свободную зону.";
+    playerErrors.push({
+      player: m.playerLabel,
+      issue: m.detail,
+      fix,
+    });
+  }
+
+  if (playerErrors.length === 0) {
+    if ((stats.offsides ?? 0) > 0) {
+      playerErrors.push({
+        player: "ФРВ / Фланги",
+        issue: `Зафиксировано ${stats.offsides} попаданий в офсайд при обостряющих передачах.`,
+        fix: "Оттягивайте форварда на полшага ближе к центру перед длинным пасом.",
+      });
+    } else if (stats.blitzTimeouts > 0 || (stats.turnTimeouts ?? 0) > 0) {
+      playerErrors.push({
+        player: "Полузащита",
+        issue: "Потери инициативы из-за нехватки времени на раздумье.",
+        fix: "Заранее планируйте серию действий (Пас 2 AP + Открывание 1 AP) по подсветке на поле.",
+      });
+    } else if (stats.shots === 0 && stats.moves >= 4) {
+      playerErrors.push({
+        player: "Атакующая линия",
+        issue: "Много перестроений без доведения атаки до ударной зоны.",
+        fix: "Переводите мяч вингерам или форварду ближе к штрафной и бейте в створ (3 AP).",
+      });
+    } else {
+      playerErrors.push({
+        player: stats.mostUsedRole || "Команда",
+        issue: "Позиционная игра дисциплинированная, грубых провалов в 1-м тайме не выявлено.",
+        fix: "Увеличьте темп комбинаций через полузащиту (6 AP) во 2-м тайме.",
+      });
+    }
+  }
+
+  const secondHalfPlan =
+    scoreBlue < scoreRed
+      ? "Во 2-м тайме включите высокий прессинг, задействуйте вингеров с большим запасом AP и копите Импульс на Супер-удар."
+      : scoreBlue > scoreRed
+      ? "Контролируйте мяч короткими пасами за 1–2 AP, не открывайте тыл и сохраняйте компактность обороны."
+      : "Играйте через треугольники в центре поля и ловите соперника на быстрых контратаках после перехвата.";
+
+  const overview = payload.isHalftime
+    ? `Разбор 1-го тайма (${scoreBlue}:${scoreRed}): зафиксировано ${mistakes.length} тактических недочётов. Отдохнувший состав готов ко 2-му тайму.`
+    : `Текущий разбор (${scoreBlue}:${scoreRed}): проанализированы действия состава и тайминги.`;
+
   return {
     styleSummary,
     tacticalAdvice,
     upgradeRecommendation,
+    isHalftime: payload.isHalftime,
+    mistakeReport: {
+      overview,
+      playerErrors,
+      secondHalfPlan,
+    },
     source: "local",
   };
 }
@@ -611,18 +688,24 @@ async function generateGeminiCoachAnalysis(
   payload: CoachAnalysisPayload
 ): Promise<CoachAnalysisResult> {
   const prompt = JSON.stringify(payload);
+  const fallbackResult = buildFallbackCoachAnalysis(payload);
   const coachSystemPrompt =
-    "Ты элитный ИИ-тренер по тактическому «Блиц-Футболу». Проанализируй статистику игрока, тип поля, счёт и текущую прокачку фигур. Дай чёткий, конкретный анализ стиля, 2 практических тактических совета на матч и 1 персональную рекомендацию по прокачке характеристик (Скорость, Точность, Защита, Пас) или уникальных способностей фигур. Пиши лаконично по-русски. Ответь строго в JSON формата: {\"styleSummary\": string, \"tacticalAdvice\": [string, string], \"upgradeRecommendation\": string}.";
+    "Ты элитный ИИ-тренер по тактическому «Блиц-Футболу» (11v11 на сетке 32x32 с очками действий AP, офсайдами и таймером хода). " +
+    (payload.isHalftime
+      ? "Сейчас ПЕРЕРЫВ матча: сделай детальный разбор тактики 1-го тайма и конкретный разбор ошибок игроков (из массива mistakes и статистики offsides, turnTimeouts, blitzTimeouts, moves, passes, shots). "
+      : "Проанализируй текущую тактику, ошибки игроков из mistakes, статистику, тип поля и прокачку. ") +
+    "Пиши чётко по-русски. Ответь СТРОГО в JSON: " +
+    '{"styleSummary": string, "tacticalAdvice": [string, string], "upgradeRecommendation": string, "mistakeReport": {"overview": string, "playerErrors": [{"player": string, "issue": string, "fix": string}], "secondHalfPlan": string}}.';
 
   if (GROQ_API_KEY && Date.now() >= groqCooldownUntil) {
     const parsed = await callGroqChat<Omit<CoachAnalysisResult, "source">>(
       coachSystemPrompt,
-      `Данные матча и состава игрока (Синие): ${prompt}`,
+      `Данные матча, ошибок и состава игрока (Синие): ${prompt}`,
       {
         model: GROQ_PRIMARY_MODEL,
-        timeoutMs: 5200,
+        timeoutMs: 6500,
         jsonMode: true,
-        maxTokens: 900,
+        maxTokens: 1100,
       }
     );
     if (parsed && parsed.styleSummary && Array.isArray(parsed.tacticalAdvice) && parsed.upgradeRecommendation) {
@@ -630,20 +713,29 @@ async function generateGeminiCoachAnalysis(
         styleSummary: parsed.styleSummary,
         tacticalAdvice: parsed.tacticalAdvice.slice(0, 3),
         upgradeRecommendation: parsed.upgradeRecommendation,
+        isHalftime: payload.isHalftime,
+        mistakeReport: parsed.mistakeReport?.playerErrors?.length
+          ? {
+              overview: parsed.mistakeReport.overview || fallbackResult.mistakeReport!.overview,
+              playerErrors: parsed.mistakeReport.playerErrors.slice(0, 4),
+              secondHalfPlan:
+                parsed.mistakeReport.secondHalfPlan || fallbackResult.mistakeReport!.secondHalfPlan,
+            }
+          : fallbackResult.mistakeReport,
         source: "groq",
       };
     }
   }
 
   if (!ai || Date.now() < geminiCooldownUntil) {
-    return buildFallbackCoachAnalysis(payload);
+    return fallbackResult;
   }
 
   try {
     const response = await withTimeout(
       ai.models.generateContent({
         model: GEMINI_MODEL,
-        contents: `Данные матча и состава игрока (Синие): ${prompt}`,
+        contents: `Данные матча, ошибок и состава игрока (Синие): ${prompt}`,
         config: {
           thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
           systemInstruction: coachSystemPrompt,
@@ -673,20 +765,22 @@ async function generateGeminiCoachAnalysis(
     );
 
     const raw = (response.text || "").trim();
-    if (!raw) return buildFallbackCoachAnalysis(payload);
+    if (!raw) return fallbackResult;
     const parsed = JSON.parse(raw) as Omit<CoachAnalysisResult, "source">;
     if (!parsed.styleSummary || !Array.isArray(parsed.tacticalAdvice)) {
-      return buildFallbackCoachAnalysis(payload);
+      return fallbackResult;
     }
     return {
       styleSummary: parsed.styleSummary,
       tacticalAdvice: parsed.tacticalAdvice.slice(0, 3),
       upgradeRecommendation: parsed.upgradeRecommendation,
+      isHalftime: payload.isHalftime,
+      mistakeReport: fallbackResult.mistakeReport,
       source: "gemini",
     };
   } catch (err) {
     geminiCooldownUntil = Date.now() + parseRetryCooldownMs(err);
-    return buildFallbackCoachAnalysis(payload);
+    return fallbackResult;
   }
 }
 
@@ -1266,6 +1360,23 @@ function executeServerTacticalAction(
     const chosenPass = passes.find((p) => p.targetPlayerId === action.targetPlayerId);
     const receiver = s.players.find((p) => p.id === action.targetPlayerId);
     if (!chosenPass || !receiver) return false;
+
+    if (chosenPass.isOffside) {
+      const oppDefender = s.players
+        .filter((p) => p.team !== actorTeam)
+        .sort(
+          (a, b) =>
+            Math.hypot(a.pos.col - receiver.pos.col, a.pos.row - receiver.pos.row) -
+            Math.hypot(b.pos.col - receiver.pos.col, b.pos.row - receiver.pos.row)
+        )[0];
+      if (oppDefender) {
+        s.ball = { pos: oppDefender.pos, carrierId: oppDefender.id };
+        s.callout = { id: `co-${Date.now()}`, pos: receiver.pos, text: "ОФСАЙД!", color: 0xf87171 };
+        addMatchCommentary(rec, `Свисток арбитра! ${ROLE_META[receiver.role].name} оказался в офсайде!`);
+        advanceServerTurn(rec, actorTeam);
+        return true;
+      }
+    }
 
     if (actorTeam === "blue") s.telemetry.passesBlue += 1;
     else s.telemetry.passesRed += 1;
